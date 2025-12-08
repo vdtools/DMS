@@ -20,23 +20,38 @@ export default function Dashboard() {
   const { getDashboardStats, customers, sales, generateDailyDeliveries, getTodayDeliveries, settings } = useApp();
   const stats = getDashboardStats();
   const todayDeliveries = getTodayDeliveries();
-  const pendingDeliveries = todayDeliveries.filter(d => d.status === 'pending');
+  // Filter out cleared deliveries for Today's popup display
+  const visibleTodayDeliveries = todayDeliveries.filter(d => !d.isCleared);
+  const pendingDeliveries = visibleTodayDeliveries.filter(d => d.status === 'pending');
   const [productPeriod, setProductPeriod] = useState<'daily' | 'monthly'>('daily');
 
-  // Calculate today's unique buying customers (excluding fixed customers)
+  // Calculate today's unique buying customers (walk-in + random, excluding fixed customers)
   const getTodayBuyingCustomers = () => {
     const today = getTodayDate();
     const todaySales = sales.filter(s => s.date === today);
-    const uniqueCustomerIds = new Set(todaySales.map(s => s.customerId));
 
-    // Count only non-fixed customers
+    // Count unique walk-in and random customers
     let count = 0;
-    uniqueCustomerIds.forEach(customerId => {
-      const customer = customers.find(c => c.id === customerId);
+    const countedCustomerIds = new Set<string>();
+
+    todaySales.forEach(sale => {
+      // Walk-in customers (no customerId) - count each sale as 1 customer
+      if (!sale.customerId) {
+        count++;
+        return;
+      }
+
+      // Skip if already counted
+      if (countedCustomerIds.has(sale.customerId)) return;
+
+      const customer = customers.find(c => c.id === sale.customerId);
+      // Count only non-fixed (random) customers
       if (customer && customer.type !== 'fixed') {
         count++;
+        countedCustomerIds.add(sale.customerId);
       }
     });
+
     return count;
   };
 

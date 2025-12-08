@@ -54,6 +54,18 @@ export default function PendingDues() {
   const currentMonth = getCurrentMonth();
   const currentMonthRecords = getAllMonthlyRecords(currentMonth);
 
+  // v2.2: Check if we're within month-end grace period (after month end + 3 days)
+  const isAfterMonthEndGracePeriod = () => {
+    const now = new Date();
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const istNow = new Date(utc + (5.5 * 60 * 60000));
+    const currentDate = istNow.getDate();
+    // After 3rd of the month, show last month's fixed customer dues
+    return currentDate > 3;
+  };
+
+  const showFixedCustomerDues = isAfterMonthEndGracePeriod();
+
   // Get month name
   const getMonthName = (monthStr: string) => {
     const [year, month] = monthStr.split('-');
@@ -300,7 +312,20 @@ export default function PendingDues() {
             </span>
           </div>
 
-          {fixedCustomersWithDue.length > 0 ? (
+          {/* v2.2: Show message if before grace period */}
+          {!showFixedCustomerDues && (
+            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 text-center">
+              <Clock className="w-10 h-10 mx-auto text-blue-500 mb-2" />
+              <p className="text-blue-700 dark:text-blue-400 font-medium">
+                Fixed customer dues will appear after 3rd of the month
+              </p>
+              <p className="text-sm text-blue-600 dark:text-blue-300 mt-1">
+                This allows customers to settle their bills with a grace period
+              </p>
+            </div>
+          )}
+
+          {showFixedCustomerDues && fixedCustomersWithDue.length > 0 ? (
             fixedCustomersWithDue.map((customer) => {
               const isExpanded = expandedCustomer === customer.id;
 
@@ -517,15 +542,15 @@ export default function PendingDues() {
                 </div>
               );
             })
-          ) : (
+          ) : showFixedCustomerDues ? (
             <div className="bg-white dark:bg-gray-800 rounded-xl p-8 shadow-sm text-center">
               <UserCheck className="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600 mb-3" />
-              <p className="text-gray-500 dark:text-gray-400">No fixed customers</p>
+              <p className="text-gray-500 dark:text-gray-400">No pending dues from fixed customers</p>
               <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">
-                Add fixed customers to track monthly dues
+                All fixed customers have cleared their dues
               </p>
             </div>
-          )}
+          ) : null}
         </div>
       )}
 

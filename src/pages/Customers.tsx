@@ -52,17 +52,70 @@ export default function Customers() {
   const totalCustomers = tabCustomers.length;
   const totalDues = tabCustomers.reduce((sum, c) => sum + getCustomerDue(c.id), 0);
 
-  // Calculate daily amount for fixed customers (sum of default items)
+  // v2.2: Calculate daily amount for fixed customers using per-slot items
+  const calculateCustomerDailyAmount = (customer: any) => {
+    let totalAmount = 0;
+    const timeSlots = customer.schedule?.timeSlots || ['morning'];
+
+    timeSlots.forEach((slot: string) => {
+      // v2.2: Use per-slot items if available, otherwise fall back to legacy defaultItems
+      const slotItems = customer.defaultItemsBySlot?.[slot];
+      const itemsToUse = (slotItems && slotItems.length > 0) ? slotItems : customer.defaultItems;
+
+      const slotAmount = itemsToUse.reduce((itemSum: number, item: any) => {
+        const product = settings.products.find(p => p.id === item.productId);
+        return itemSum + (product?.price || 0) * item.quantity;
+      }, 0);
+      totalAmount += slotAmount;
+    });
+
+    return totalAmount;
+  };
+
   const dailyAmount = isFixedOnly
-    ? tabCustomers.reduce((sum, customer) => {
-        return sum + customer.defaultItems.reduce((itemSum, item) => {
-          const product = settings.products.find(p => p.id === item.productId);
-          return itemSum + (product?.price || 0) * item.quantity;
-        }, 0);
-      }, 0)
+    ? tabCustomers.reduce((sum, customer) => sum + calculateCustomerDailyAmount(customer), 0)
     : 0;
 
-  const monthlyAmount = dailyAmount * 30;
+  // v2.2: Calculate monthly amount with pro-rata from customer creation date
+  const calculateProRataMonthlyAmount = () => {
+    if (!isFixedOnly) return 0;
+
+    const now = new Date();
+    // Get IST date properly
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const istNow = new Date(utc + (5.5 * 60 * 60000));
+    const currentYear = istNow.getFullYear();
+    const currentMonth = istNow.getMonth();
+    const currentDate = istNow.getDate();
+    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+
+    let totalMonthlyAmount = 0;
+
+    tabCustomers.forEach(customer => {
+      const customerDailyAmount = calculateCustomerDailyAmount(customer);
+
+      // Parse customer creation date
+      const createdAt = new Date(customer.createdAt);
+      const createdYear = createdAt.getFullYear();
+      const createdMonth = createdAt.getMonth();
+      const createdDate = createdAt.getDate();
+
+      // Calculate remaining days for this customer
+      let remainingDays = daysInMonth;
+
+      // If customer was created this month, calculate pro-rata
+      if (createdYear === currentYear && createdMonth === currentMonth) {
+        // Customer added today or later = remaining days from creation date
+        remainingDays = daysInMonth - createdDate + 1; // +1 to include creation day
+      }
+
+      totalMonthlyAmount += customerDailyAmount * remainingDays;
+    });
+
+    return Math.round(totalMonthlyAmount);
+  };
+
+  const monthlyAmount = calculateProRataMonthlyAmount();
 
   return (
     <div className="space-y-4">

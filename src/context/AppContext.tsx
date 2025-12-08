@@ -401,7 +401,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const newDeliveries: Delivery[] = [];
 
     fixedCustomers.forEach(customer => {
-      if (customer.defaultItems.length === 0) return;
+      // v2.2: Check both legacy defaultItems and new defaultItemsBySlot
+      const hasLegacyItems = customer.defaultItems.length > 0;
+      const hasSlotItems = customer.defaultItemsBySlot && Object.values(customer.defaultItemsBySlot).some(items => items && items.length > 0);
+      if (!hasLegacyItems && !hasSlotItems) return;
 
       // Check if customer should have delivery today based on schedule
       const schedule = customer.schedule;
@@ -437,7 +440,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
           );
 
           if (!existsForSlot) {
-            const items = customer.defaultItems.map(item => {
+            // v2.2: Use per-slot items if available, otherwise fall back to legacy defaultItems
+            const slotItems = customer.defaultItemsBySlot?.[slot];
+            const itemsToUse = (slotItems && slotItems.length > 0) ? slotItems : customer.defaultItems;
+
+            const items = itemsToUse.map(item => {
               const product = settings.products.find(p => p.id === item.productId);
               return {
                 productId: item.productId,
@@ -447,19 +454,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
               };
             });
 
-            newDeliveries.push({
-              id: generateId(),
-              customerId: customer.id,
-              customerName: customer.name,
-              items,
-              status: 'pending',
-              isOneTime: false,
-              timeSlot: slot,
-              date: today,
-              deliveredAt: null,
-              paymentStatus: 'unpaid',
-              paidAmount: 0,
-            });
+            if (items.length > 0) {
+              newDeliveries.push({
+                id: generateId(),
+                customerId: customer.id,
+                customerName: customer.name,
+                items,
+                status: 'pending',
+                isOneTime: false,
+                timeSlot: slot,
+                date: today,
+                deliveredAt: null,
+                paymentStatus: 'unpaid',
+                paidAmount: 0,
+              });
+            }
           }
         });
       }

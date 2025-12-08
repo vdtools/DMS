@@ -606,12 +606,16 @@ export default function Deliveries() {
                           {delivery.extraItems && delivery.extraItems.length > 0 && (
                             <div className="text-sm text-blue-600 dark:text-blue-400 mb-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                               <span className="font-medium">Extra: </span>
-                              {delivery.extraItems.map((item: any, idx: number) => (
-                                <span key={item.productId}>
-                                  {item.productName}: {item.quantity}
-                                  {idx < delivery.extraItems!.length - 1 ? ', ' : ''}
-                                </span>
-                              ))}
+                              {delivery.extraItems.map((item: any, idx: number) => {
+                                const product = settings.products.find(p => p.id === item.productId);
+                                const itemAmount = Math.round((product?.price || 0) * item.quantity);
+                                return (
+                                  <span key={item.productId}>
+                                    {item.productName}: {item.quantity} ({formatCurrency(itemAmount)})
+                                    {idx < delivery.extraItems!.length - 1 ? ', ' : ''}
+                                  </span>
+                                );
+                              })}
                             </div>
                           )}
 
@@ -684,6 +688,16 @@ export default function Deliveries() {
                             <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                               Delivered at {new Date(delivery.deliveredAt).toLocaleTimeString()}
                             </p>
+                          )}
+
+                          {/* Clear button for completed/skipped deliveries - only for today */}
+                          {todayFlag && (delivery.status === 'delivered' || delivery.status === 'skipped') && !delivery.isCleared && (
+                            <button
+                              onClick={() => updateDelivery(delivery.id, { isCleared: true } as any)}
+                              className="mt-2 w-full py-2 bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-200 text-sm rounded-lg font-medium"
+                            >
+                              Clear from Today
+                            </button>
                           )}
                         </div>
                       );

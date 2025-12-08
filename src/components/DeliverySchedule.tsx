@@ -243,12 +243,14 @@ export default function DeliverySchedule() {
 
     const total = calculateDeliveryTotal(delivery);
     const paidAmount = paymentMode === 'due' ? 0 : Math.round(parseInt(paymentAmount) || total);
+    const dueAmount = total - paidAmount; // v2.2: Calculate remaining due
 
-    // For walk-in customers with Due mode, add them to Random customers list
+    // v2.2: For walk-in customers with partial payment or due, save as random customer
     let saleCustomerId = delivery.isWalkIn ? null : delivery.customerId;
+    let newCustomerId: string | null = null;
 
-    if (delivery.isWalkIn && paymentMode === 'due') {
-      // Create new random customer from walk-in
+    if (delivery.isWalkIn && dueAmount > 0) {
+      // Create new random customer from walk-in with due
       const customerData = {
         name: delivery.customerName,
         phone: (delivery as any).customerPhone || '',
@@ -257,8 +259,9 @@ export default function DeliverySchedule() {
         defaultItems: [],
       };
       addCustomer(customerData);
-      // Note: Customer ID will be assigned by addCustomer,
-      // we'll use the name to match in sales/dues
+      // Find the newly created customer (it will be the last one with this name)
+      const newCustomer = customers.find(c => c.name === delivery.customerName && c.type === 'random');
+      newCustomerId = newCustomer?.id || null;
     }
 
     // Create sale items
@@ -287,13 +290,16 @@ export default function DeliverySchedule() {
       });
     }
 
-    // Create sale
+    // v2.2: Use the new customer ID for walk-in with due, otherwise use original
+    const finalCustomerId = newCustomerId || saleCustomerId;
+
+    // Create sale with proper due tracking
     addSale({
-      customerId: saleCustomerId,
+      customerId: finalCustomerId,
       customerName: delivery.customerName,
       items: saleItems,
       totalAmount: total,
-      paymentType: paymentMode,
+      paymentType: dueAmount > 0 ? 'due' : paymentMode, // Mark as due if there's remaining amount
       paidAmount: paidAmount,
       date: getTodayDate(),
       deliveryId: delivery.id,
@@ -691,6 +697,35 @@ export default function DeliverySchedule() {
                         {delivery.status}
                       </span>
                     </div>
+
+                    {/* v2.2: Show address and call option for saved customers */}
+                    {(() => {
+                      const customer = !delivery.isWalkIn ? customers.find(c => c.id === delivery.customerId) : null;
+                      const phone = customer?.phone || (delivery as any).customerPhone;
+                      const address = customer?.address || (delivery as any).customerAddress;
+                      if (!phone && !address) return null;
+                      return (
+                        <div className="mb-2 p-2 bg-white/50 dark:bg-gray-800/50 rounded-lg space-y-1">
+                          {address && (
+                            <div className="flex items-start gap-2 text-xs text-gray-600 dark:text-gray-400">
+                              <MapPin className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                              <span>{address}</span>
+                            </div>
+                          )}
+                          {phone && (
+                            <div className="flex items-center gap-2">
+                              <a
+                                href={`tel:${phone}`}
+                                className="flex items-center gap-1 px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded-lg text-xs hover:bg-green-200 dark:hover:bg-green-900/50 transition-colors"
+                              >
+                                <Phone className="w-3 h-3" />
+                                {phone}
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {/* Regular Items */}
                     <div className="text-sm text-gray-600 dark:text-gray-300 mb-2">

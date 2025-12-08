@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { formatCurrency } from '../lib/storage';
-import { DeliverySchedule } from '../types';
+import { DeliverySchedule, DefaultItemsBySlot } from '../types';
 import {
   User,
   Phone,
@@ -19,6 +19,8 @@ import {
   Moon,
 } from 'lucide-react';
 
+type TimeSlotType = 'morning' | 'noon' | 'evening';
+
 export default function AddCustomer() {
   const navigate = useNavigate();
   const { addCustomer, settings } = useApp();
@@ -28,15 +30,17 @@ export default function AddCustomer() {
     address: '',
     type: 'random' as 'fixed' | 'random',
     defaultItems: [] as { productId: string; quantity: number }[],
+    defaultItemsBySlot: {} as DefaultItemsBySlot, // v2.2: Per time slot items
     schedule: {
       frequency: 'daily' as DeliverySchedule['frequency'],
-      timeSlots: ['morning'] as ('morning' | 'noon' | 'evening')[],
+      timeSlots: ['morning'] as TimeSlotType[],
       days: [] as number[],
       dates: [] as number[],
     },
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [amountInputs, setAmountInputs] = useState<{ [key: string]: string }>({});
+  const [amountInputs, setAmountInputs] = useState<{ [slotProduct: string]: string }>({});
+  const [activeSlotTab, setActiveSlotTab] = useState<TimeSlotType>('morning'); // v2.2: Active tab for per-slot items
 
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const timeSlotOptions = [
@@ -55,17 +59,42 @@ export default function AddCustomer() {
       newErrors.timeSlots = 'Select at least one time slot';
     }
 
+    // v2.2: Check if at least one slot has items
+    if (formData.type === 'fixed') {
+      const hasAnyItems = formData.schedule.timeSlots.some(slot =>
+        (formData.defaultItemsBySlot[slot]?.length || 0) > 0
+      );
+      if (!hasAnyItems) {
+        newErrors.items = 'Add at least one item for a time slot';
+      }
+    }
+
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
       return;
     }
+
+    // v2.2: Combine all slot items into defaultItems for backward compatibility
+    const allItems: { productId: string; quantity: number }[] = [];
+    formData.schedule.timeSlots.forEach(slot => {
+      const slotItems = formData.defaultItemsBySlot[slot] || [];
+      slotItems.forEach(item => {
+        const existing = allItems.find(i => i.productId === item.productId);
+        if (existing) {
+          existing.quantity += item.quantity;
+        } else {
+          allItems.push({ ...item });
+        }
+      });
+    });
 
     const customerData = {
       name: formData.name,
       phone: formData.phone,
       address: formData.address,
       type: formData.type,
-      defaultItems: formData.defaultItems,
+      defaultItems: allItems, // Legacy: combined items for backward compatibility
+      defaultItemsBySlot: formData.type === 'fixed' ? formData.defaultItemsBySlot : undefined, // v2.2: Per slot items
       ...(formData.type === 'fixed' && {
         schedule: {
           frequency: formData.schedule.frequency,
@@ -116,52 +145,67 @@ export default function AddCustomer() {
     });
   };
 
-  const addDefaultItem = (productId: string) => {
-    if (!formData.defaultItems.find(i => i.productId === productId)) {
+  // v2.2: Per-slot item management
+  const getSlotKey = (slot: TimeSlotType, productId: string) => `${slot}_${productId}`;
+
+  const addDefaultItem = (productId: string, slot: TimeSlotType = activeSlotTab) => {
+    const slotItems = formData.defaultItemsBySlot[slot] || [];
+    if (!slotItems.find(i => i.productId === productId)) {
       setFormData({
         ...formData,
-        defaultItems: [...formData.defaultItems, { productId, quantity: 1 }],
+        defaultItemsBySlot: {
+          ...formData.defaultItemsBySlot,
+          [slot]: [...slotItems, { productId, quantity: 1 }],
+        },
       });
       // Also set initial amount in amountInputs
       const product = settings.products.find(p => p.id === productId);
       if (product) {
-        setAmountInputs({ ...amountInputs, [productId]: Math.round(product.price).toString() });
+        setAmountInputs({ ...amountInputs, [getSlotKey(slot, productId)]: Math.round(product.price).toString() });
       }
     }
   };
 
-  const removeDefaultItem = (productId: string) => {
+  const removeDefaultItem = (productId: string, slot: TimeSlotType = activeSlotTab) => {
+    const slotItems = formData.defaultItemsBySlot[slot] || [];
     setFormData({
       ...formData,
-      defaultItems: formData.defaultItems.filter(i => i.productId !== productId),
+      defaultItemsBySlot: {
+        ...formData.defaultItemsBySlot,
+        [slot]: slotItems.filter(i => i.productId !== productId),
+      },
     });
     const newAmounts = { ...amountInputs };
-    delete newAmounts[productId];
+    delete newAmounts[getSlotKey(slot, productId)];
     setAmountInputs(newAmounts);
   };
 
-  const updateItemQuantity = (productId: string, quantity: number) => {
-    if (quantity < 1) {
-      removeDefaultItem(productId);
+  const updateItemQuantity = (productId: string, quantity: number, slot: TimeSlotType = activeSlotTab) => {
+    if (quantity < 0.01) {
+      removeDefaultItem(productId, slot);
       return;
     }
-    // Round to whole number - no decimals
-    const roundedQty = Math.round(quantity);
+    // Round to 2 decimal places for decimal support
+    const roundedQty = Math.round(quantity * 100) / 100;
+    const slotItems = formData.defaultItemsBySlot[slot] || [];
     setFormData({
       ...formData,
-      defaultItems: formData.defaultItems.map(i =>
-        i.productId === productId ? { ...i, quantity: roundedQty } : i
-      ),
+      defaultItemsBySlot: {
+        ...formData.defaultItemsBySlot,
+        [slot]: slotItems.map(i =>
+          i.productId === productId ? { ...i, quantity: roundedQty } : i
+        ),
+      },
     });
     // Update amount input when quantity changes
     const product = settings.products.find(p => p.id === productId);
     if (product) {
-      setAmountInputs({ ...amountInputs, [productId]: Math.round(product.price * roundedQty).toString() });
+      setAmountInputs({ ...amountInputs, [getSlotKey(slot, productId)]: Math.round(product.price * roundedQty).toString() });
     }
   };
 
-  const updateByAmount = (productId: string, amount: string) => {
-    setAmountInputs({ ...amountInputs, [productId]: amount });
+  const updateByAmount = (productId: string, amount: string, slot: TimeSlotType = activeSlotTab) => {
+    setAmountInputs({ ...amountInputs, [getSlotKey(slot, productId)]: amount });
     const product = settings.products.find(p => p.id === productId);
     if (!product || !amount) return;
 
@@ -171,23 +215,51 @@ export default function AddCustomer() {
     }
 
     // Calculate quantity from amount - allow decimal quantities
-    // e.g., ₹25 with price ₹60/L = 0.42L
-    const quantity = Math.round((amountNum / product.price) * 100) / 100; // 2 decimal places
+    const quantity = Math.round((amountNum / product.price) * 100) / 100;
 
-    const existing = formData.defaultItems.find(i => i.productId === productId);
+    const slotItems = formData.defaultItemsBySlot[slot] || [];
+    const existing = slotItems.find(i => i.productId === productId);
     if (existing) {
       setFormData({
         ...formData,
-        defaultItems: formData.defaultItems.map(i =>
-          i.productId === productId ? { ...i, quantity: quantity > 0 ? quantity : 0.01 } : i
-        ),
+        defaultItemsBySlot: {
+          ...formData.defaultItemsBySlot,
+          [slot]: slotItems.map(i =>
+            i.productId === productId ? { ...i, quantity: quantity > 0 ? quantity : 0.01 } : i
+          ),
+        },
       });
     } else {
       setFormData({
         ...formData,
-        defaultItems: [...formData.defaultItems, { productId, quantity: quantity > 0 ? quantity : 0.01 }],
+        defaultItemsBySlot: {
+          ...formData.defaultItemsBySlot,
+          [slot]: [...slotItems, { productId, quantity: quantity > 0 ? quantity : 0.01 }],
+        },
       });
     }
+  };
+
+  // Copy items from one slot to another
+  const copyItemsToSlot = (fromSlot: TimeSlotType, toSlot: TimeSlotType) => {
+    const fromItems = formData.defaultItemsBySlot[fromSlot] || [];
+    setFormData({
+      ...formData,
+      defaultItemsBySlot: {
+        ...formData.defaultItemsBySlot,
+        [toSlot]: [...fromItems],
+      },
+    });
+    // Copy amount inputs
+    const newAmounts = { ...amountInputs };
+    fromItems.forEach(item => {
+      const fromKey = getSlotKey(fromSlot, item.productId);
+      const toKey = getSlotKey(toSlot, item.productId);
+      if (amountInputs[fromKey]) {
+        newAmounts[toKey] = amountInputs[fromKey];
+      }
+    });
+    setAmountInputs(newAmounts);
   };
 
   return (
@@ -304,18 +376,70 @@ export default function AddCustomer() {
           </div>
         </div>
 
-        {/* Default Items (for Fixed Customers) */}
-        {formData.type === 'fixed' && (
+        {/* Default Items (for Fixed Customers) - v2.2: Per Time Slot */}
+        {formData.type === 'fixed' && formData.schedule.timeSlots.length > 0 && (
           <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm">
             <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-4">
-              Daily Default Items
+              Default Items by Time Slot
             </h2>
 
-            {/* Selected Items */}
-            {formData.defaultItems.length > 0 && (
+            {/* Time Slot Tabs */}
+            <div className="flex border-b border-gray-200 dark:border-gray-600 mb-4">
+              {formData.schedule.timeSlots.map((slot) => {
+                const slotConfig = timeSlotOptions.find(t => t.value === slot);
+                const SlotIcon = slotConfig?.icon || Sun;
+                const itemCount = (formData.defaultItemsBySlot[slot] || []).length;
+                return (
+                  <button
+                    key={slot}
+                    type="button"
+                    onClick={() => setActiveSlotTab(slot)}
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 transition-all ${
+                      activeSlotTab === slot
+                        ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400'
+                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700'
+                    }`}
+                  >
+                    <SlotIcon className="w-4 h-4" />
+                    <span className="text-sm font-medium">{slotConfig?.label}</span>
+                    {itemCount > 0 && (
+                      <span className="w-5 h-5 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center">
+                        {itemCount}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Copy from another slot - show if multiple slots and current slot is empty */}
+            {formData.schedule.timeSlots.length > 1 && (formData.defaultItemsBySlot[activeSlotTab]?.length || 0) === 0 && (
+              <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                <p className="text-sm text-blue-700 dark:text-blue-400 mb-2">Copy items from:</p>
+                <div className="flex gap-2">
+                  {formData.schedule.timeSlots.filter(s => s !== activeSlotTab && (formData.defaultItemsBySlot[s]?.length || 0) > 0).map(slot => {
+                    const slotConfig = timeSlotOptions.find(t => t.value === slot);
+                    return (
+                      <button
+                        key={slot}
+                        type="button"
+                        onClick={() => copyItemsToSlot(slot, activeSlotTab)}
+                        className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
+                      >
+                        {slotConfig?.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Selected Items for Active Slot */}
+            {(formData.defaultItemsBySlot[activeSlotTab]?.length || 0) > 0 && (
               <div className="space-y-3 mb-4">
-                {formData.defaultItems.map((item) => {
+                {(formData.defaultItemsBySlot[activeSlotTab] || []).map((item) => {
                   const product = settings.products.find(p => p.id === item.productId);
+                  const slotKey = getSlotKey(activeSlotTab, item.productId);
                   return (
                     <div
                       key={item.productId}
@@ -333,7 +457,7 @@ export default function AddCustomer() {
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => updateItemQuantity(item.productId, item.quantity - 1)}
+                            onClick={() => updateItemQuantity(item.productId, item.quantity - 0.5, activeSlotTab)}
                             className="p-1.5 rounded-lg bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500"
                           >
                             <Minus className="w-3 h-3 text-gray-600 dark:text-gray-300" />
@@ -343,7 +467,7 @@ export default function AddCustomer() {
                           </span>
                           <button
                             type="button"
-                            onClick={() => updateItemQuantity(item.productId, item.quantity + 1)}
+                            onClick={() => updateItemQuantity(item.productId, item.quantity + 0.5, activeSlotTab)}
                             className="p-1.5 rounded-lg bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500"
                           >
                             <Plus className="w-3 h-3 text-gray-600 dark:text-gray-300" />
@@ -357,8 +481,8 @@ export default function AddCustomer() {
                             <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500 text-sm">₹</span>
                             <input
                               type="number"
-                              value={amountInputs[item.productId] || ''}
-                              onChange={(e) => updateByAmount(item.productId, e.target.value)}
+                              value={amountInputs[slotKey] || ''}
+                              onChange={(e) => updateByAmount(item.productId, e.target.value, activeSlotTab)}
                               placeholder="Amount"
                               className="w-20 pl-6 pr-2 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-white"
                             />
@@ -372,7 +496,7 @@ export default function AddCustomer() {
 
                         <button
                           type="button"
-                          onClick={() => removeDefaultItem(item.productId)}
+                          onClick={() => removeDefaultItem(item.productId, activeSlotTab)}
                           className="p-1.5 rounded-lg bg-red-100 dark:bg-red-900/20 hover:bg-red-200 dark:hover:bg-red-900/40 text-red-500"
                         >
                           <Minus className="w-4 h-4" />
@@ -384,15 +508,15 @@ export default function AddCustomer() {
               </div>
             )}
 
-            {/* Add Products */}
+            {/* Add Products for Active Slot */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {settings.products
-                .filter(p => p.isActive && !formData.defaultItems.find(i => i.productId === p.id))
+                .filter(p => p.isActive && !(formData.defaultItemsBySlot[activeSlotTab] || []).find(i => i.productId === p.id))
                 .map((product) => (
                   <button
                     key={product.id}
                     type="button"
-                    onClick={() => addDefaultItem(product.id)}
+                    onClick={() => addDefaultItem(product.id, activeSlotTab)}
                     className="flex items-center justify-center gap-2 p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all"
                   >
                     <Plus className="w-4 h-4 text-gray-400" />
@@ -400,6 +524,8 @@ export default function AddCustomer() {
                   </button>
                 ))}
             </div>
+
+            {errors.items && <p className="text-red-500 text-sm mt-3">{errors.items}</p>}
           </div>
         )}
 

@@ -31,9 +31,17 @@ export interface Customer {
   phone: string;
   address: string;
   type: 'fixed' | 'random';
-  defaultItems: DefaultItem[];
+  defaultItems: DefaultItem[]; // Legacy - kept for backward compatibility
+  defaultItemsBySlot?: DefaultItemsBySlot; // v2.2: Per time slot items
   schedule?: DeliverySchedule; // Only for fixed customers
   createdAt: string;
+}
+
+// v2.2: Per Time Slot Items
+export interface DefaultItemsBySlot {
+  morning?: DefaultItem[];
+  noon?: DefaultItem[];
+  evening?: DefaultItem[];
 }
 
 export interface DefaultItem {
@@ -107,6 +115,7 @@ export interface Delivery {
   paidAmount?: number;
   paymentMode?: 'cash' | 'online' | 'due';
   saleId?: string; // Link to created sale
+  isCleared?: boolean; // v2.1: Hide from Today's Deliveries popup but show in Deliveries page
 }
 
 export interface DeliveryItem {

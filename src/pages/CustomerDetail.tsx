@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { formatCurrency, formatDate, getTodayDate } from '../lib/storage';
-import { exportBillToPDF } from '../lib/pdfExport';
+import { exportBillToPDF, exportMonthlyBillToPDF } from '../lib/pdfExport';
 import {
   ArrowLeft,
   Phone,
@@ -22,6 +22,8 @@ import {
   Plus,
   Minus,
   Calendar,
+  FileText,
+  Banknote,
 } from 'lucide-react';
 
 export default function CustomerDetail() {
@@ -36,6 +38,9 @@ export default function CustomerDetail() {
     deleteCustomer,
     addPayment,
     settings,
+    getMonthlyRecord,
+    getCurrentMonth,
+    addPaymentToMonthlyRecord,
   } = useApp();
 
   const customer = getCustomerById(id || '');
@@ -48,6 +53,18 @@ export default function CustomerDetail() {
   const [editingDefaultItems, setEditingDefaultItems] = useState(customer?.defaultItems || []);
   const [editingSchedule, setEditingSchedule] = useState(customer?.schedule || { frequency: 'daily' as const, timeSlots: ['morning'] as ('morning' | 'noon' | 'evening')[] });
   const [amountInputs, setAmountInputs] = useState<{ [key: string]: string }>({});
+  const [paymentMode, setPaymentMode] = useState<'cash' | 'online'>('cash');
+
+  // Get monthly record for fixed customers
+  const currentMonth = getCurrentMonth();
+  const monthlyRecord = customer ? getMonthlyRecord(customer.id, currentMonth) : undefined;
+
+  // Get month name for display
+  const getMonthName = (monthStr: string): string => {
+    const [year, month] = monthStr.split('-');
+    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
+    return date.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+  };
 
   if (!customer) {
     return (
@@ -87,15 +104,29 @@ export default function CustomerDetail() {
 
   const handlePayment = () => {
     if (!paymentAmount || Number(paymentAmount) <= 0) return;
+    const paymentAmt = Number(paymentAmount);
+
+    // Add to regular payments
     addPayment({
       customerId: customer.id,
-      amount: Number(paymentAmount),
-      paymentMode: 'cash',
+      amount: paymentAmt,
+      paymentMode: paymentMode,
       date: getTodayDate(),
       note: '',
     });
+
+    // Also add to monthly record for fixed customers
+    if (customer.type === 'fixed') {
+      addPaymentToMonthlyRecord(customer.id, {
+        date: getTodayDate(),
+        amount: paymentAmt,
+        mode: paymentMode,
+      });
+    }
+
     setShowPaymentModal(false);
     setPaymentAmount('');
+    setPaymentMode('cash');
   };
 
   const handleWhatsApp = () => {
@@ -449,12 +480,13 @@ export default function CustomerDetail() {
                       <div className="flex flex-wrap gap-2 mb-3">
                         {customer.defaultItems.map((item) => {
                           const product = settings.products.find(p => p.id === item.productId);
+                          const itemAmount = product ? Math.round(product.price * item.quantity * 100) / 100 : 0;
                           return (
                             <span
                               key={item.productId}
                               className="px-2 py-1 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-sm rounded"
                             >
-                              {product?.name}: {item.quantity} {product?.unit}
+                              {product?.name}: {item.quantity} {product?.unit} (₹{itemAmount})
                             </span>
                           );
                         })}
@@ -512,36 +544,202 @@ export default function CustomerDetail() {
         </div>
       </div>
 
-      {/* Action Buttons */}
-      <div className="grid grid-cols-2 gap-3">
-        {dueAmount > 0 && (
-          <>
-            <button
-              onClick={handleWhatsApp}
-              className="flex items-center justify-center gap-2 py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl"
-            >
-              <MessageCircle className="w-5 h-5" />
-              Reminder
-            </button>
-            <button
-              onClick={() => {
-                setPaymentAmount(dueAmount.toString());
-                setShowPaymentModal(true);
-              }}
-              className="flex items-center justify-center gap-2 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl"
-            >
-              <Wallet className="w-5 h-5" />
-              Receive
-            </button>
-          </>
-        )}
-        <button
-          onClick={handleExportBill}
-          className={`flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl ${dueAmount <= 0 ? 'col-span-2' : ''}`}
-        >
-          <Download className="w-5 h-5" />
-          Export Bill (PDF)
-        </button>
+      {/* Pending Dues Section - Same design as image */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-gray-100 dark:border-gray-700">
+          <h3 className="font-semibold text-gray-800 dark:text-white">
+            {customer.type === 'fixed' ? `${getMonthName(currentMonth)} - Account Summary` : 'Payment Summary'}
+          </h3>
+        </div>
+
+        <div className="p-4">
+          {/* Fixed Customer - Monthly Summary like image */}
+          {customer.type === 'fixed' && monthlyRecord ? (
+            <>
+              {/* Previous Balance & This Month */}
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Previous Balance</p>
+                  <p className="text-xl font-bold text-gray-800 dark:text-white">
+                    {formatCurrency(monthlyRecord.previousBalance)}
+                  </p>
+                </div>
+                <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">This Month</p>
+                  <p className="text-xl font-bold text-gray-800 dark:text-white">
+                    {formatCurrency(monthlyRecord.currentMonthTotal)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Paid & Balance Due */}
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border-l-4 border-green-500">
+                  <p className="text-xs text-green-600 dark:text-green-400">Paid</p>
+                  <p className="text-xl font-bold text-green-600 dark:text-green-400">
+                    {formatCurrency(monthlyRecord.totalPaid)}
+                  </p>
+                </div>
+                <div className={`p-3 rounded-lg border-l-4 ${
+                  monthlyRecord.balanceDue > 0
+                    ? 'bg-red-50 dark:bg-red-900/20 border-red-500'
+                    : 'bg-green-50 dark:bg-green-900/20 border-green-500'
+                }`}>
+                  <p className={`text-xs ${monthlyRecord.balanceDue > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                    Balance Due
+                  </p>
+                  <p className={`text-xl font-bold ${monthlyRecord.balanceDue > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                    {formatCurrency(monthlyRecord.balanceDue)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Delivery Stats */}
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                <span className="text-green-600">{monthlyRecord.deliveredCount} delivered</span>
+                {monthlyRecord.skippedCount > 0 && (
+                  <span className="text-red-600 ml-2">{monthlyRecord.skippedCount} skipped</span>
+                )}
+              </div>
+
+              {/* Action Buttons - Call, WhatsApp, Receive */}
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <a
+                  href={`tel:+91${customer.phone}`}
+                  className="flex items-center justify-center gap-1 py-2.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg text-sm font-medium"
+                >
+                  <Phone className="w-4 h-4" />
+                  Call
+                </a>
+                <button
+                  onClick={handleWhatsApp}
+                  className="flex items-center justify-center gap-1 py-2.5 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded-lg text-sm font-medium"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  WhatsApp
+                </button>
+                <button
+                  onClick={() => {
+                    setPaymentAmount(monthlyRecord.balanceDue.toString());
+                    setShowPaymentModal(true);
+                  }}
+                  className="flex items-center justify-center gap-1 py-2.5 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 rounded-lg text-sm font-medium"
+                >
+                  <Wallet className="w-4 h-4" />
+                  Receive
+                </button>
+              </div>
+
+              {/* Generate Monthly Bill Button */}
+              <button
+                onClick={() => {
+                  const deliveries = monthlyRecord.deliveryDetails
+                    .filter(d => d.status === 'delivered')
+                    .map(d => ({
+                      date: d.date,
+                      items: d.items.map(item => ({
+                        name: item.productName,
+                        quantity: item.quantity,
+                        price: item.price,
+                        total: item.amount,
+                      })),
+                      total: d.total,
+                      paidAtDelivery: d.paidAmount || 0,
+                    }));
+
+                  const paymentsForBill = monthlyRecord.payments.map(p => ({
+                    date: p.date,
+                    amount: p.amount,
+                    mode: p.mode,
+                  }));
+
+                  exportMonthlyBillToPDF({
+                    shopName: settings.shopName,
+                    shopPhone: settings.phone,
+                    shopAddress: settings.address,
+                    customerName: customer.name,
+                    customerPhone: customer.phone,
+                    customerAddress: customer.address || '',
+                    month: getMonthName(currentMonth),
+                    previousBalance: monthlyRecord.previousBalance,
+                    deliveries,
+                    payments: paymentsForBill,
+                    monthlyTotal: monthlyRecord.currentMonthTotal,
+                    totalPayments: monthlyRecord.totalPaid,
+                    balanceDue: monthlyRecord.balanceDue,
+                  });
+                }}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-orange-500 hover:bg-orange-600 text-white font-medium rounded-xl"
+              >
+                <FileText className="w-5 h-5" />
+                Generate Monthly Bill
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Random Customer - Simple Summary */}
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Total Purchases</p>
+                  <p className="text-xl font-bold text-gray-800 dark:text-white">
+                    {formatCurrency(totalPurchases)}
+                  </p>
+                </div>
+                <div className={`p-3 rounded-lg ${
+                  dueAmount > 0
+                    ? 'bg-red-50 dark:bg-red-900/20'
+                    : 'bg-green-50 dark:bg-green-900/20'
+                }`}>
+                  <p className={`text-xs ${dueAmount > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                    Pending Due
+                  </p>
+                  <p className={`text-xl font-bold ${dueAmount > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                    {formatCurrency(dueAmount)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <a
+                  href={`tel:+91${customer.phone}`}
+                  className="flex items-center justify-center gap-1 py-2.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg text-sm font-medium"
+                >
+                  <Phone className="w-4 h-4" />
+                  Call
+                </a>
+                <button
+                  onClick={handleWhatsApp}
+                  className="flex items-center justify-center gap-1 py-2.5 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded-lg text-sm font-medium"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  WhatsApp
+                </button>
+                {dueAmount > 0 && (
+                  <button
+                    onClick={() => {
+                      setPaymentAmount(dueAmount.toString());
+                      setShowPaymentModal(true);
+                    }}
+                    className="flex items-center justify-center gap-1 py-2.5 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 rounded-lg text-sm font-medium"
+                  >
+                    <Wallet className="w-4 h-4" />
+                    Receive
+                  </button>
+                )}
+              </div>
+
+              {/* Export Bill Button */}
+              <button
+                onClick={handleExportBill}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl"
+              >
+                <Download className="w-5 h-5" />
+                Export Bill (PDF)
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Recent Transactions */}
@@ -631,29 +829,69 @@ export default function CustomerDetail() {
           <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 w-full max-w-md">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-800 dark:text-white">
-                Receive Payment
+                Receive Payment - {customer.name}
               </h3>
               <button
-                onClick={() => setShowPaymentModal(false)}
+                onClick={() => {
+                  setShowPaymentModal(false);
+                  setPaymentMode('cash');
+                }}
                 className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
               >
                 <X className="w-5 h-5 text-gray-500" />
               </button>
             </div>
             <div className="space-y-4">
-              <input
-                type="number"
-                value={paymentAmount}
-                onChange={(e) => setPaymentAmount(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-white"
-                placeholder="Enter amount"
-              />
+              {/* Payment Mode Selection */}
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setPaymentMode('cash')}
+                  className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
+                    paymentMode === 'cash'
+                      ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+                      : 'border-gray-200 dark:border-gray-600'
+                  }`}
+                >
+                  <Banknote className={`w-6 h-6 ${paymentMode === 'cash' ? 'text-green-500' : 'text-gray-400'}`} />
+                  <span className={`text-sm font-medium ${paymentMode === 'cash' ? 'text-green-600' : 'text-gray-600 dark:text-gray-300'}`}>
+                    Cash
+                  </span>
+                </button>
+                <button
+                  onClick={() => setPaymentMode('online')}
+                  className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
+                    paymentMode === 'online'
+                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                      : 'border-gray-200 dark:border-gray-600'
+                  }`}
+                >
+                  <CreditCard className={`w-6 h-6 ${paymentMode === 'online' ? 'text-blue-500' : 'text-gray-400'}`} />
+                  <span className={`text-sm font-medium ${paymentMode === 'online' ? 'text-blue-600' : 'text-gray-600 dark:text-gray-300'}`}>
+                    Online
+                  </span>
+                </button>
+              </div>
+
+              {/* Amount Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Amount
+                </label>
+                <input
+                  type="number"
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-white text-lg font-bold"
+                  placeholder="Enter amount"
+                />
+              </div>
+
               <button
                 onClick={handlePayment}
                 className="w-full flex items-center justify-center gap-2 py-3 bg-green-600 hover:bg-green-700 text-white font-medium rounded-xl"
               >
                 <Check className="w-5 h-5" />
-                Confirm Payment
+                Receive {formatCurrency(Number(paymentAmount) || 0)}
               </button>
             </div>
           </div>

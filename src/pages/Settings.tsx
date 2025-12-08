@@ -424,7 +424,7 @@ export default function Settings() {
         <div className="space-y-3">
           <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
             <span className="text-gray-600 dark:text-gray-300">Version</span>
-            <span className="font-semibold text-gray-800 dark:text-white">2.0</span>
+            <span className="font-semibold text-gray-800 dark:text-white">2.2</span>
           </div>
           <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
             <span className="text-gray-600 dark:text-gray-300">Created By</span>
