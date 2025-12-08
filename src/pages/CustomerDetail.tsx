@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { formatCurrency, formatDate, getTodayDate } from '../lib/storage';
 import { exportBillToPDF, exportMonthlyBillToPDF } from '../lib/pdfExport';
+import { DefaultItemsBySlot } from '../types';
 import {
   ArrowLeft,
   Phone,
@@ -24,7 +25,12 @@ import {
   Calendar,
   FileText,
   Banknote,
+  Sun,
+  Sunset,
+  Moon,
 } from 'lucide-react';
+
+type TimeSlotType = 'morning' | 'noon' | 'evening';
 
 export default function CustomerDetail() {
   const { id } = useParams();
@@ -50,10 +56,20 @@ export default function CustomerDetail() {
   const [paymentAmount, setPaymentAmount] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isEditingItems, setIsEditingItems] = useState(false);
-  const [editingDefaultItems, setEditingDefaultItems] = useState(customer?.defaultItems || []);
-  const [editingSchedule, setEditingSchedule] = useState(customer?.schedule || { frequency: 'daily' as const, timeSlots: ['morning'] as ('morning' | 'noon' | 'evening')[] });
+  // v2.2.5: Per Time Slot Items
+  const [editingDefaultItemsBySlot, setEditingDefaultItemsBySlot] = useState<DefaultItemsBySlot>(
+    customer?.defaultItemsBySlot || {}
+  );
+  const [editingSchedule, setEditingSchedule] = useState(customer?.schedule || { frequency: 'daily' as const, timeSlots: ['morning'] as TimeSlotType[] });
   const [amountInputs, setAmountInputs] = useState<{ [key: string]: string }>({});
   const [paymentMode, setPaymentMode] = useState<'cash' | 'online'>('cash');
+  const [activeSlotTab, setActiveSlotTab] = useState<TimeSlotType>('morning');
+
+  const timeSlotOptions = [
+    { value: 'morning', label: 'Morning', time: '5:00 AM', icon: Sun },
+    { value: 'noon', label: 'Noon', time: '12:00 PM', icon: Sunset },
+    { value: 'evening', label: 'Evening', time: '6:00 PM', icon: Moon },
+  ];
 
   // Get monthly record for fixed customers
   const currentMonth = getCurrentMonth();
@@ -169,62 +185,119 @@ export default function CustomerDetail() {
     });
   };
 
+  // v2.2.5: Save default items by slot
   const handleSaveDefaultItems = () => {
+    // Combine all slot items into defaultItems for backward compatibility
+    const allItems: { productId: string; quantity: number }[] = [];
+    editingSchedule.timeSlots.forEach(slot => {
+      const slotItems = editingDefaultItemsBySlot[slot] || [];
+      slotItems.forEach(item => {
+        const existing = allItems.find(i => i.productId === item.productId);
+        if (existing) {
+          existing.quantity += item.quantity;
+        } else {
+          allItems.push({ ...item });
+        }
+      });
+    });
+
     updateCustomer(customer.id, {
-      defaultItems: editingDefaultItems,
+      defaultItems: allItems,
+      defaultItemsBySlot: editingDefaultItemsBySlot,
       schedule: editingSchedule,
     });
     setIsEditingItems(false);
   };
 
-  const updateItemQuantity = (productId: string, delta: number) => {
-    const existing = editingDefaultItems.find(i => i.productId === productId);
-    if (existing) {
-      const newQty = Math.round(existing.quantity + delta);
-      if (newQty <= 0) {
-        setEditingDefaultItems(editingDefaultItems.filter(i => i.productId !== productId));
-        setAmountInputs({ ...amountInputs, [productId]: '' });
-      } else {
-        setEditingDefaultItems(editingDefaultItems.map(i =>
-          i.productId === productId ? { ...i, quantity: newQty } : i
-        ));
-        const product = settings.products.find(p => p.id === productId);
-        if (product) {
-          setAmountInputs({ ...amountInputs, [productId]: Math.round(product.price * newQty).toString() });
-        }
-      }
-    } else if (delta > 0) {
-      const qty = Math.round(delta);
-      setEditingDefaultItems([...editingDefaultItems, { productId, quantity: qty }]);
+  // v2.2.5: Per-slot item management
+  const getSlotKey = (slot: TimeSlotType, productId: string) => `${slot}_${productId}`;
+
+  const addDefaultItem = (productId: string, slot: TimeSlotType = activeSlotTab) => {
+    const slotItems = editingDefaultItemsBySlot[slot] || [];
+    if (!slotItems.find(i => i.productId === productId)) {
+      setEditingDefaultItemsBySlot({
+        ...editingDefaultItemsBySlot,
+        [slot]: [...slotItems, { productId, quantity: 1 }],
+      });
       const product = settings.products.find(p => p.id === productId);
       if (product) {
-        setAmountInputs({ ...amountInputs, [productId]: Math.round(product.price * qty).toString() });
+        setAmountInputs({ ...amountInputs, [getSlotKey(slot, productId)]: Math.round(product.price).toString() });
       }
     }
   };
 
-  const updateItemByAmount = (productId: string, amount: string) => {
-    setAmountInputs({ ...amountInputs, [productId]: amount });
+  const removeDefaultItem = (productId: string, slot: TimeSlotType = activeSlotTab) => {
+    const slotItems = editingDefaultItemsBySlot[slot] || [];
+    setEditingDefaultItemsBySlot({
+      ...editingDefaultItemsBySlot,
+      [slot]: slotItems.filter(i => i.productId !== productId),
+    });
+    const newAmounts = { ...amountInputs };
+    delete newAmounts[getSlotKey(slot, productId)];
+    setAmountInputs(newAmounts);
+  };
+
+  const updateItemQuantity = (productId: string, quantity: number, slot: TimeSlotType = activeSlotTab) => {
+    if (quantity < 0.01) {
+      removeDefaultItem(productId, slot);
+      return;
+    }
+    const roundedQty = Math.round(quantity * 100) / 100;
+    const slotItems = editingDefaultItemsBySlot[slot] || [];
+    setEditingDefaultItemsBySlot({
+      ...editingDefaultItemsBySlot,
+      [slot]: slotItems.map(i =>
+        i.productId === productId ? { ...i, quantity: roundedQty } : i
+      ),
+    });
+    const product = settings.products.find(p => p.id === productId);
+    if (product) {
+      setAmountInputs({ ...amountInputs, [getSlotKey(slot, productId)]: Math.round(product.price * roundedQty).toString() });
+    }
+  };
+
+  const updateByAmount = (productId: string, amount: string, slot: TimeSlotType = activeSlotTab) => {
+    setAmountInputs({ ...amountInputs, [getSlotKey(slot, productId)]: amount });
     const product = settings.products.find(p => p.id === productId);
     if (!product || !amount) return;
 
     const amountNum = parseFloat(amount);
-    if (isNaN(amountNum) || amountNum <= 0) {
-      setEditingDefaultItems(editingDefaultItems.filter(i => i.productId !== productId));
-      return;
-    }
+    if (isNaN(amountNum) || amountNum <= 0) return;
 
-    // Allow decimal quantities - e.g., ₹25 with price ₹60/L = 0.42L
-    const quantity = Math.round((amountNum / product.price) * 100) / 100; // 2 decimal places
-
-    const existing = editingDefaultItems.find(i => i.productId === productId);
+    const quantity = Math.round((amountNum / product.price) * 100) / 100;
+    const slotItems = editingDefaultItemsBySlot[slot] || [];
+    const existing = slotItems.find(i => i.productId === productId);
     if (existing) {
-      setEditingDefaultItems(editingDefaultItems.map(i =>
-        i.productId === productId ? { ...i, quantity: quantity > 0 ? quantity : 0.01 } : i
-      ));
+      setEditingDefaultItemsBySlot({
+        ...editingDefaultItemsBySlot,
+        [slot]: slotItems.map(i =>
+          i.productId === productId ? { ...i, quantity: quantity > 0 ? quantity : 0.01 } : i
+        ),
+      });
     } else {
-      setEditingDefaultItems([...editingDefaultItems, { productId, quantity: quantity > 0 ? quantity : 0.01 }]);
+      setEditingDefaultItemsBySlot({
+        ...editingDefaultItemsBySlot,
+        [slot]: [...slotItems, { productId, quantity: quantity > 0 ? quantity : 0.01 }],
+      });
     }
+  };
+
+  // Copy items from one slot to another
+  const copyItemsToSlot = (fromSlot: TimeSlotType, toSlot: TimeSlotType) => {
+    const fromItems = editingDefaultItemsBySlot[fromSlot] || [];
+    setEditingDefaultItemsBySlot({
+      ...editingDefaultItemsBySlot,
+      [toSlot]: [...fromItems],
+    });
+    const newAmounts = { ...amountInputs };
+    fromItems.forEach(item => {
+      const fromKey = getSlotKey(fromSlot, item.productId);
+      const toKey = getSlotKey(toSlot, item.productId);
+      if (amountInputs[fromKey]) {
+        newAmounts[toKey] = amountInputs[fromKey];
+      }
+    });
+    setAmountInputs(newAmounts);
   };
 
   return (
@@ -346,18 +419,31 @@ export default function CustomerDetail() {
               )}
             </div>
 
-            {/* Default Items & Schedule Section */}
+            {/* v2.2.5: Default Items & Schedule Section - Per Time Slot */}
             {customer.type === 'fixed' && (
               <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-sm font-medium text-blue-700 dark:text-blue-300">
-                    Daily Default Items & Schedule
+                    Default Items by Time Slot
                   </p>
                   {!isEditingItems ? (
                     <button
                       onClick={() => {
-                        setEditingDefaultItems(customer.defaultItems || []);
+                        // Initialize per-slot items from existing data
+                        const existingBySlot = customer.defaultItemsBySlot || {};
+                        // If no per-slot items, fall back to legacy items for all slots
+                        if (Object.keys(existingBySlot).length === 0 && customer.defaultItems?.length > 0) {
+                          const slots = customer.schedule?.timeSlots || ['morning'];
+                          const fallback: DefaultItemsBySlot = {};
+                          slots.forEach(slot => {
+                            fallback[slot] = [...customer.defaultItems];
+                          });
+                          setEditingDefaultItemsBySlot(fallback);
+                        } else {
+                          setEditingDefaultItemsBySlot(existingBySlot);
+                        }
                         setEditingSchedule(customer.schedule || { frequency: 'daily', timeSlots: ['morning'] });
+                        setActiveSlotTab((customer.schedule?.timeSlots?.[0] as TimeSlotType) || 'morning');
                         setIsEditingItems(true);
                       }}
                       className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
@@ -384,53 +470,7 @@ export default function CustomerDetail() {
 
                 {isEditingItems ? (
                   <div className="space-y-4">
-                    {/* Edit Default Items */}
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Items:</p>
-                      {settings.products.filter(p => p.isActive).map((product) => {
-                        const item = editingDefaultItems.find(i => i.productId === product.id);
-                        return (
-                          <div key={product.id} className="p-2 bg-white dark:bg-gray-700 rounded-lg">
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-sm text-gray-700 dark:text-gray-200">{product.name}</span>
-                              <span className="text-xs text-gray-500">₹{product.price}/{product.unit}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => updateItemQuantity(product.id, -1)}
-                                className="p-1 bg-gray-200 dark:bg-gray-600 rounded"
-                              >
-                                <Minus className="w-3 h-3" />
-                              </button>
-                              <span className="w-12 text-center text-xs font-medium">
-                                {item?.quantity || 0} {product.unit}
-                              </span>
-                              <button
-                                onClick={() => updateItemQuantity(product.id, 1)}
-                                className="p-1 bg-gray-200 dark:bg-gray-600 rounded"
-                              >
-                                <Plus className="w-3 h-3" />
-                              </button>
-                              <span className="text-xs text-gray-500">or ₹</span>
-                              <input
-                                type="number"
-                                value={amountInputs[product.id] || ''}
-                                onChange={(e) => updateItemByAmount(product.id, e.target.value)}
-                                placeholder="Amt"
-                                className="w-16 px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800"
-                              />
-                              {item && item.quantity > 0 && (
-                                <span className="text-xs font-medium text-green-600">
-                                  ={formatCurrency(product.price * item.quantity)}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Edit Schedule */}
+                    {/* Schedule Selection */}
                     <div className="space-y-2">
                       <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Schedule:</p>
                       <select
@@ -442,14 +482,12 @@ export default function CustomerDetail() {
                         <option value="weekly">Weekly</option>
                         <option value="specific_days">Specific Days</option>
                       </select>
+
                       <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mt-2">Time Slots:</p>
                       <div className="flex gap-2 flex-wrap">
-                        {[
-                          { value: 'morning', label: 'Morning (5 AM)' },
-                          { value: 'noon', label: 'Noon (12 PM)' },
-                          { value: 'evening', label: 'Evening (6 PM)' },
-                        ].map((slot) => {
-                          const isSelected = (editingSchedule.timeSlots || []).includes(slot.value as any);
+                        {timeSlotOptions.map((slot) => {
+                          const isSelected = (editingSchedule.timeSlots || []).includes(slot.value as TimeSlotType);
+                          const SlotIcon = slot.icon;
                           return (
                             <button
                               key={slot.value}
@@ -458,29 +496,189 @@ export default function CustomerDetail() {
                                 const currentSlots = editingSchedule.timeSlots || [];
                                 const newSlots = isSelected
                                   ? currentSlots.filter(s => s !== slot.value)
-                                  : [...currentSlots, slot.value as 'morning' | 'noon' | 'evening'];
+                                  : [...currentSlots, slot.value as TimeSlotType];
                                 setEditingSchedule({ ...editingSchedule, timeSlots: newSlots });
+                                if (!isSelected && newSlots.length === 1) {
+                                  setActiveSlotTab(slot.value as TimeSlotType);
+                                }
                               }}
-                              className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                              className={`flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg border transition-all ${
                                 isSelected
                                   ? 'border-purple-500 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
                                   : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400'
                               }`}
                             >
-                              {isSelected && '✓ '}{slot.label}
+                              <SlotIcon className="w-3 h-3" />
+                              {slot.label}
                             </button>
                           );
                         })}
                       </div>
                     </div>
+
+                    {/* Time Slot Tabs for Items */}
+                    {editingSchedule.timeSlots.length > 0 && (
+                      <>
+                        <div className="flex border-b border-gray-200 dark:border-gray-600">
+                          {editingSchedule.timeSlots.map((slot) => {
+                            const slotConfig = timeSlotOptions.find(t => t.value === slot);
+                            const SlotIcon = slotConfig?.icon || Sun;
+                            const itemCount = (editingDefaultItemsBySlot[slot] || []).length;
+                            return (
+                              <button
+                                key={slot}
+                                type="button"
+                                onClick={() => setActiveSlotTab(slot)}
+                                className={`flex-1 flex items-center justify-center gap-1 py-2 transition-all ${
+                                  activeSlotTab === slot
+                                    ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400'
+                                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700'
+                                }`}
+                              >
+                                <SlotIcon className="w-3 h-3" />
+                                <span className="text-xs font-medium">{slotConfig?.label}</span>
+                                {itemCount > 0 && (
+                                  <span className="w-4 h-4 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center">
+                                    {itemCount}
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Copy from another slot */}
+                        {editingSchedule.timeSlots.length > 1 && (editingDefaultItemsBySlot[activeSlotTab]?.length || 0) === 0 && (
+                          <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+                            <p className="text-xs text-blue-700 dark:text-blue-400 mb-1">Copy items from:</p>
+                            <div className="flex gap-1">
+                              {editingSchedule.timeSlots.filter(s => s !== activeSlotTab && (editingDefaultItemsBySlot[s]?.length || 0) > 0).map(slot => {
+                                const slotConfig = timeSlotOptions.find(t => t.value === slot);
+                                return (
+                                  <button
+                                    key={slot}
+                                    type="button"
+                                    onClick={() => copyItemsToSlot(slot, activeSlotTab)}
+                                    className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
+                                  >
+                                    {slotConfig?.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Selected Items for Active Slot */}
+                        {(editingDefaultItemsBySlot[activeSlotTab]?.length || 0) > 0 && (
+                          <div className="space-y-2">
+                            {(editingDefaultItemsBySlot[activeSlotTab] || []).map((item) => {
+                              const product = settings.products.find(p => p.id === item.productId);
+                              const slotKey = getSlotKey(activeSlotTab, item.productId);
+                              return (
+                                <div key={item.productId} className="p-2 bg-white dark:bg-gray-700 rounded-lg">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-sm text-gray-700 dark:text-gray-200">{product?.name}</span>
+                                    <span className="text-xs text-gray-500">₹{product?.price}/{product?.unit}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      onClick={() => updateItemQuantity(item.productId, item.quantity - 0.5, activeSlotTab)}
+                                      className="p-1 bg-gray-200 dark:bg-gray-600 rounded"
+                                    >
+                                      <Minus className="w-3 h-3" />
+                                    </button>
+                                    <span className="w-12 text-center text-xs font-medium">
+                                      {item.quantity} {product?.unit}
+                                    </span>
+                                    <button
+                                      onClick={() => updateItemQuantity(item.productId, item.quantity + 0.5, activeSlotTab)}
+                                      className="p-1 bg-gray-200 dark:bg-gray-600 rounded"
+                                    >
+                                      <Plus className="w-3 h-3" />
+                                    </button>
+                                    <span className="text-xs text-gray-500">or ₹</span>
+                                    <input
+                                      type="number"
+                                      value={amountInputs[slotKey] || ''}
+                                      onChange={(e) => updateByAmount(item.productId, e.target.value, activeSlotTab)}
+                                      placeholder="Amt"
+                                      className="w-14 px-1 py-1 text-xs rounded border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800"
+                                    />
+                                    <span className="text-xs font-medium text-green-600">
+                                      ={formatCurrency((product?.price || 0) * item.quantity)}
+                                    </span>
+                                    <button
+                                      onClick={() => removeDefaultItem(item.productId, activeSlotTab)}
+                                      className="p-1 bg-red-100 dark:bg-red-900/20 rounded text-red-500"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Add Products for Active Slot */}
+                        <div className="grid grid-cols-2 gap-1">
+                          {settings.products
+                            .filter(p => p.isActive && !(editingDefaultItemsBySlot[activeSlotTab] || []).find(i => i.productId === p.id))
+                            .map((product) => (
+                              <button
+                                key={product.id}
+                                type="button"
+                                onClick={() => addDefaultItem(product.id, activeSlotTab)}
+                                className="flex items-center justify-center gap-1 p-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all"
+                              >
+                                <Plus className="w-3 h-3 text-gray-400" />
+                                <span className="text-xs text-gray-600 dark:text-gray-300">{product.name}</span>
+                              </button>
+                            ))}
+                        </div>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <>
-                    {customer.defaultItems.length > 0 ? (
+                    {/* Display items by slot */}
+                    {customer.defaultItemsBySlot && Object.keys(customer.defaultItemsBySlot).length > 0 ? (
+                      <div className="space-y-2 mb-3">
+                        {(customer.schedule?.timeSlots || ['morning']).map(slot => {
+                          const slotItems = customer.defaultItemsBySlot?.[slot] || [];
+                          if (slotItems.length === 0) return null;
+                          const slotConfig = timeSlotOptions.find(t => t.value === slot);
+                          const SlotIcon = slotConfig?.icon || Sun;
+                          return (
+                            <div key={slot} className="p-2 bg-white/50 dark:bg-gray-700/50 rounded">
+                              <div className="flex items-center gap-1 mb-1">
+                                <SlotIcon className="w-3 h-3 text-purple-500" />
+                                <span className="text-xs font-medium text-purple-600 dark:text-purple-400">{slotConfig?.label}</span>
+                              </div>
+                              <div className="flex flex-wrap gap-1">
+                                {slotItems.map((item) => {
+                                  const product = settings.products.find(p => p.id === item.productId);
+                                  const itemAmount = product ? Math.round(product.price * item.quantity) : 0;
+                                  return (
+                                    <span
+                                      key={item.productId}
+                                      className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs rounded"
+                                    >
+                                      {product?.name}: {item.quantity} {product?.unit} (₹{itemAmount})
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : customer.defaultItems && customer.defaultItems.length > 0 ? (
                       <div className="flex flex-wrap gap-2 mb-3">
                         {customer.defaultItems.map((item) => {
                           const product = settings.products.find(p => p.id === item.productId);
-                          const itemAmount = product ? Math.round(product.price * item.quantity * 100) / 100 : 0;
+                          const itemAmount = product ? Math.round(product.price * item.quantity) : 0;
                           return (
                             <span
                               key={item.productId}
@@ -544,7 +742,7 @@ export default function CustomerDetail() {
         </div>
       </div>
 
-      {/* Pending Dues Section - Same design as image */}
+      {/* Pending Dues Section */}
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-hidden">
         <div className="p-4 border-b border-gray-100 dark:border-gray-700">
           <h3 className="font-semibold text-gray-800 dark:text-white">
@@ -553,10 +751,8 @@ export default function CustomerDetail() {
         </div>
 
         <div className="p-4">
-          {/* Fixed Customer - Monthly Summary like image */}
           {customer.type === 'fixed' && monthlyRecord ? (
             <>
-              {/* Previous Balance & This Month */}
               <div className="grid grid-cols-2 gap-3 mb-3">
                 <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
                   <p className="text-xs text-gray-500 dark:text-gray-400">Previous Balance</p>
@@ -572,7 +768,6 @@ export default function CustomerDetail() {
                 </div>
               </div>
 
-              {/* Paid & Balance Due */}
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border-l-4 border-green-500">
                   <p className="text-xs text-green-600 dark:text-green-400">Paid</p>
@@ -594,7 +789,6 @@ export default function CustomerDetail() {
                 </div>
               </div>
 
-              {/* Delivery Stats */}
               <div className="text-xs text-gray-500 dark:text-gray-400 mb-4">
                 <span className="text-green-600">{monthlyRecord.deliveredCount} delivered</span>
                 {monthlyRecord.skippedCount > 0 && (
@@ -602,7 +796,6 @@ export default function CustomerDetail() {
                 )}
               </div>
 
-              {/* Action Buttons - Call, WhatsApp, Receive */}
               <div className="grid grid-cols-3 gap-2 mb-3">
                 <a
                   href={`tel:+91${customer.phone}`}
@@ -630,7 +823,6 @@ export default function CustomerDetail() {
                 </button>
               </div>
 
-              {/* Generate Monthly Bill Button */}
               <button
                 onClick={() => {
                   const deliveries = monthlyRecord.deliveryDetails
@@ -677,7 +869,6 @@ export default function CustomerDetail() {
             </>
           ) : (
             <>
-              {/* Random Customer - Simple Summary */}
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
                   <p className="text-xs text-gray-500 dark:text-gray-400">Total Purchases</p>
@@ -699,7 +890,6 @@ export default function CustomerDetail() {
                 </div>
               </div>
 
-              {/* Action Buttons */}
               <div className="grid grid-cols-3 gap-2 mb-3">
                 <a
                   href={`tel:+91${customer.phone}`}
@@ -729,7 +919,6 @@ export default function CustomerDetail() {
                 )}
               </div>
 
-              {/* Export Bill Button */}
               <button
                 onClick={handleExportBill}
                 className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl"
@@ -773,7 +962,6 @@ export default function CustomerDetail() {
                     {formatDate(sale.date)}
                   </p>
                 </div>
-                {/* Items */}
                 <div className="flex flex-wrap gap-1">
                   {sale.items.map((item, idx) => (
                     <span
@@ -842,7 +1030,6 @@ export default function CustomerDetail() {
               </button>
             </div>
             <div className="space-y-4">
-              {/* Payment Mode Selection */}
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => setPaymentMode('cash')}
@@ -872,7 +1059,6 @@ export default function CustomerDetail() {
                 </button>
               </div>
 
-              {/* Amount Input */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Amount

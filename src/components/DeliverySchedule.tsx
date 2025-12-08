@@ -727,26 +727,34 @@ export default function DeliverySchedule() {
                       );
                     })()}
 
-                    {/* Regular Items */}
-                    <div className="text-sm text-gray-600 dark:text-gray-300 mb-2">
-                      {delivery.items.map((item, idx) => (
-                        <span key={item.productId}>
-                          {item.productName}: {item.quantity}
-                          {idx < delivery.items.length - 1 ? ', ' : ''}
-                        </span>
-                      ))}
+                    {/* v2.2.5: Regular Items with Amount */}
+                    <div className="text-sm text-gray-600 dark:text-gray-300 mb-2 space-y-0.5">
+                      {delivery.items.map((item) => {
+                        const product = settings.products.find(p => p.id === item.productId);
+                        const itemAmount = product ? Math.round(product.price * item.quantity) : 0;
+                        return (
+                          <div key={item.productId} className="flex justify-between">
+                            <span>{item.productName}: {item.quantity} {product?.unit || ''}</span>
+                            <span className="text-gray-500">₹{itemAmount}</span>
+                          </div>
+                        );
+                      })}
                     </div>
 
-                    {/* Extra Items */}
+                    {/* v2.2.5: Extra Items with Amount */}
                     {delivery.extraItems && delivery.extraItems.length > 0 && (
                       <div className="text-sm text-blue-600 dark:text-blue-400 mb-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                        <span className="font-medium">Extra: </span>
-                        {delivery.extraItems.map((item, idx) => (
-                          <span key={item.productId}>
-                            {item.productName}: {item.quantity}
-                            {idx < delivery.extraItems!.length - 1 ? ', ' : ''}
-                          </span>
-                        ))}
+                        <span className="font-medium block mb-1">Extra Items:</span>
+                        {delivery.extraItems.map((item) => {
+                          const product = settings.products.find(p => p.id === item.productId);
+                          const itemAmount = product ? Math.round(product.price * item.quantity) : 0;
+                          return (
+                            <div key={item.productId} className="flex justify-between">
+                              <span>{item.productName}: {item.quantity} {product?.unit || ''}</span>
+                              <span>₹{itemAmount}</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
 
