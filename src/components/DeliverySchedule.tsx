@@ -245,12 +245,12 @@ export default function DeliverySchedule() {
     const paidAmount = paymentMode === 'due' ? 0 : Math.round(parseInt(paymentAmount) || total);
     const dueAmount = total - paidAmount; // v2.2: Calculate remaining due
 
-    // v2.2: For walk-in customers with partial payment or due, save as random customer
+    // v2.2.5: For walk-in customers with partial payment or due, save as random customer
     let saleCustomerId = delivery.isWalkIn ? null : delivery.customerId;
     let newCustomerId: string | null = null;
 
     if (delivery.isWalkIn && dueAmount > 0) {
-      // Create new random customer from walk-in with due
+      // Create new random customer from walk-in with due and get the ID directly
       const customerData = {
         name: delivery.customerName,
         phone: (delivery as any).customerPhone || '',
@@ -258,10 +258,8 @@ export default function DeliverySchedule() {
         type: 'random' as const,
         defaultItems: [],
       };
-      addCustomer(customerData);
-      // Find the newly created customer (it will be the last one with this name)
-      const newCustomer = customers.find(c => c.name === delivery.customerName && c.type === 'random');
-      newCustomerId = newCustomer?.id || null;
+      // v2.2.5: addCustomer now returns the new customer ID directly
+      newCustomerId = addCustomer(customerData);
     }
 
     // Create sale items
