@@ -38,7 +38,7 @@ interface AppContextType {
 
   // Customers
   customers: Customer[];
-  addCustomer: (customer: Omit<Customer, 'id' | 'createdAt'>) => void;
+  addCustomer: (customer: Omit<Customer, 'id' | 'createdAt'>) => string; // v2.2.5: Returns customer ID
   updateCustomer: (id: string, updates: Partial<Customer>) => void;
   deleteCustomer: (id: string) => void;
   getCustomerById: (id: string) => Customer | undefined;
@@ -286,8 +286,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setIsAuthenticated(false);
   };
 
-  // Customer functions
-  const addCustomer = (customer: Omit<Customer, 'id' | 'createdAt'>) => {
+  // Customer functions - v2.2.5: Returns customer ID
+  const addCustomer = (customer: Omit<Customer, 'id' | 'createdAt'>): string => {
     const newCustomer: Customer = {
       ...customer,
       id: generateId(),
@@ -295,6 +295,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
     saveCustomer(newCustomer);
     setCustomersState([...customers, newCustomer]);
+    return newCustomer.id; // v2.2.5: Return the new customer ID
   };
 
   const updateCustomer = (id: string, updates: Partial<Customer>) => {
