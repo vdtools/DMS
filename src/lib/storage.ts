@@ -226,6 +226,7 @@ export function getSettings(): SettingsData {
       { id: '6', name: 'Buttermilk', unit: 'Liter', price: 30, isActive: true },
     ],
     whatsappTemplate: DEFAULT_WHATSAPP_TEMPLATE,
+    version: 'DMS V2.3.5', // v2.3.5: Application version
   });
 }
 

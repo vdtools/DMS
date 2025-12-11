@@ -882,7 +882,7 @@ export default function CustomerDetail() {
                 )}
               </div>
 
-              <div className="grid grid-cols-3 gap-2 mb-3">
+              <div className="grid grid-cols-2 gap-2 mb-3">
                 <a
                   href={`tel:+91${customer.phone}`}
                   className="flex items-center justify-center gap-1 py-2.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg text-sm font-medium"
@@ -897,15 +897,38 @@ export default function CustomerDetail() {
                   <MessageCircle className="w-4 h-4" />
                   WhatsApp
                 </button>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {/* v2.3.5: Add Advance Button for Fixed Customers */}
+                <button
+                  onClick={() => setShowAdvanceModal(true)}
+                  className="flex items-center justify-center gap-1 py-2.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg text-sm font-medium"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Advance
+                </button>
+                {monthlyRecord.balanceDue > 0 && (
+                  <button
+                    onClick={() => {
+                      setPaymentAmount(monthlyRecord.balanceDue.toString());
+                      setShowPaymentModal(true);
+                    }}
+                    className="flex items-center justify-center gap-1 py-2.5 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 rounded-lg text-sm font-medium"
+                  >
+                    <Wallet className="w-4 h-4" />
+                    Receive
+                  </button>
+                )}
+                {/* v2.3.5: Convert Customer Type Button for Fixed Customers */}
                 <button
                   onClick={() => {
-                    setPaymentAmount(monthlyRecord.balanceDue.toString());
-                    setShowPaymentModal(true);
+                    setConvertType('random');
+                    setShowConvertModal(true);
                   }}
-                  className="flex items-center justify-center gap-1 py-2.5 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 rounded-lg text-sm font-medium"
+                  className="flex items-center justify-center gap-1 py-2.5 bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 rounded-lg text-sm font-medium"
                 >
-                  <Wallet className="w-4 h-4" />
-                  Receive
+                  <Edit2 className="w-4 h-4" />
+                  Convert
                 </button>
               </div>
 

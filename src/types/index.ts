@@ -136,6 +136,7 @@ export interface Settings {
   language: 'en' | 'hi';
   products: Product[];
   whatsappTemplate: string; // WhatsApp message template with placeholders
+  version: string; // v2.3.5: Application version
 }
 
 export interface DashboardStats {
