@@ -95,6 +95,7 @@ export default function AddCustomer() {
       type: formData.type,
       defaultItems: allItems, // Legacy: combined items for backward compatibility
       defaultItemsBySlot: formData.type === 'fixed' ? formData.defaultItemsBySlot : undefined, // v2.2: Per slot items
+      advanceBalance: 0, // v2.3.5: Initialize advance balance to 0
       ...(formData.type === 'fixed' && {
         schedule: {
           frequency: formData.schedule.frequency,

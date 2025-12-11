@@ -79,6 +79,7 @@ export interface Payment {
   paymentMode: 'cash' | 'online'; // Payment mode
   date: string;
   note: string;
+  createdAt: string; // v2.3.5: When payment was recorded
 }
 
 // Skip reasons in Hinglish

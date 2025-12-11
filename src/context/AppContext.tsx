@@ -362,6 +362,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const newPayment: Payment = {
       ...payment,
       id: generateId(),
+      createdAt: new Date().toISOString(),
     };
     savePayment(newPayment);
     setPaymentsState([...payments, newPayment]);
@@ -607,10 +608,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Get payment transactions
     const customerPayments = payments
       .filter(p => p.customerId === customerId)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     customerPayments.forEach(payment => {
-      const dateTime = new Date(payment.createdAt);
+      const dateTime = new Date(payment.date);
       transactions.push({
         id: payment.id,
         date: payment.date,
@@ -624,7 +625,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         items: [],
         tags: ['💰 Payment'],
         paymentMode: payment.paymentMode,
-        createdAt: payment.createdAt,
+        createdAt: new Date().toISOString(), // Use current time for transaction history
       });
     });
 

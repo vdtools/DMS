@@ -257,6 +257,7 @@ export default function DeliverySchedule() {
         address: (delivery as any).customerAddress || '',
         type: 'random' as const,
         defaultItems: [],
+        advanceBalance: 0, // v2.3.5: Required field
       };
       // v2.2.5: addCustomer now returns the new customer ID directly
       newCustomerId = addCustomer(customerData);
