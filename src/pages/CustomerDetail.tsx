@@ -150,6 +150,7 @@ export default function CustomerDetail() {
       paymentMode: paymentMode,
       date: getTodayDate(),
       note: '',
+      createdAt: new Date().toISOString(), // v2.3.5: Required field
     });
 
     // Also add to monthly record for fixed customers

@@ -165,6 +165,7 @@ export default function PendingDues() {
       paymentMode: paymentMode,
       date: getTodayDate(),
       note: paymentNote,
+      createdAt: new Date().toISOString(), // v2.3.5: Required field
     });
 
     setPaymentModal(null);
