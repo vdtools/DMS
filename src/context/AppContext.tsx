@@ -104,7 +104,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [deliveries, setDeliveriesState] = useState<Delivery[]>([]);
   const [advancePayments, setAdvancePaymentsState] = useState<AdvancePayment[]>([]); // v2.3.5: Advance payments
   const [monthlyRecords, setMonthlyRecordsState] = useState<MonthlyRecord[]>([]);
-  const [settings, setSettingsState] = useState<Settings>(getSettings());
+  const [settings, setSettingsState] = useState<Settings>(getSettings() as Settings);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -122,7 +122,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setDeliveriesState(getDeliveries());
     setAdvancePaymentsState(getAdvancePayments()); // v2.3.5: Initialize advance payments
     setMonthlyRecordsState(getMonthlyRecords());
-    const savedSettings = getSettings();
+    const savedSettings = getSettings() as Settings;
     setSettingsState(savedSettings);
     setTheme(savedSettings.theme || 'light');
   }, []);

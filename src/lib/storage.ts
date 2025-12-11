@@ -196,6 +196,7 @@ interface SettingsData {
   language: 'en' | 'hi';
   products: { id: string; name: string; unit: string; price: number; isActive: boolean }[];
   whatsappTemplate: string;
+  version: string; // v2.3.5: Application version
 }
 
 const DEFAULT_WHATSAPP_TEMPLATE = `🏪 *{shopName}*
