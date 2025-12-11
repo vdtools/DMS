@@ -235,8 +235,24 @@ export default function Customers() {
                       </span>
                     )}
                     <button
-                      onClick={() => setShowDeleteConfirm(customer.id)}
-                      className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
+                      onClick={() => {
+                        // v2.3.5: Check if customer has dues before allowing delete
+                        const hasDue = due > 0;
+                        const hasAdvance = (customer.advanceBalance || 0) > 0;
+                        
+                        if (hasDue || hasAdvance) {
+                          alert(`Cannot delete customer. ${hasDue ? `Outstanding due: ₹${due}` : ''} ${hasAdvance ? `Advance balance: ₹${customer.advanceBalance}` : ''}`);
+                          return;
+                        }
+                        setShowDeleteConfirm(customer.id);
+                      }}
+                      className={`p-2 rounded-lg transition-all ${
+                        due > 0 || (customer.advanceBalance || 0) > 0
+                          ? 'opacity-50 cursor-not-allowed bg-gray-100 dark:bg-gray-700 text-gray-400'
+                          : 'hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500'
+                      }`}
+                      disabled={due > 0 || (customer.advanceBalance || 0) > 0}
+                      title={due > 0 || (customer.advanceBalance || 0) > 0 ? 'Cannot delete customer with dues or advance balance' : 'Delete customer'}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>

@@ -16,7 +16,7 @@ import {
 
 export default function AddSale() {
   const navigate = useNavigate();
-  const { customers, settings, addSale } = useApp();
+  const { customers, settings, addSale, getCustomerById, useAdvanceBalance } = useApp();
   const [step, setStep] = useState(1);
   const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null);
   const [customerSearch, setCustomerSearch] = useState('');
@@ -24,6 +24,7 @@ export default function AddSale() {
   const [paymentType, setPaymentType] = useState<'cash' | 'online' | 'due'>('cash');
   const [paidAmount, setPaidAmount] = useState(0);
   const [amountInputs, setAmountInputs] = useState<{ [key: string]: string }>({});
+  const [useAdvance, setUseAdvance] = useState(false); // v2.3.5: Use advance balance
 
   const selectedCustomerData = customers.find(c => c.id === selectedCustomer);
 
@@ -103,6 +104,19 @@ export default function AddSale() {
     });
 
     const total = calculateTotal();
+    let finalPaidAmount = paymentType === 'due' ? paidAmount : total;
+    
+    // v2.3.5: Use advance balance if customer has advance and wants to use it
+    if (selectedCustomer && useAdvance && selectedCustomerData) {
+      const availableAdvance = selectedCustomerData.advanceBalance || 0;
+      const advanceToUse = Math.min(availableAdvance, total - finalPaidAmount);
+      
+      if (advanceToUse > 0) {
+        // Use advance balance
+        useAdvanceBalance(selectedCustomer, advanceToUse);
+        finalPaidAmount += advanceToUse;
+      }
+    }
 
     addSale({
       customerId: selectedCustomer,
@@ -110,7 +124,7 @@ export default function AddSale() {
       items: saleItems,
       totalAmount: total,
       paymentType,
-      paidAmount: paymentType === 'due' ? paidAmount : total,
+      paidAmount: finalPaidAmount,
       date: getTodayDate(),
     });
 
@@ -366,19 +380,45 @@ export default function AddSale() {
             </div>
 
             {paymentType === 'due' && (
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Advance Payment (Optional)
-                </label>
-                <input
-                  type="number"
-                  value={paidAmount}
-                  onChange={(e) => setPaidAmount(Number(e.target.value))}
-                  min="0"
-                  max={calculateTotal()}
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-white focus:ring-2 focus:ring-blue-500"
-                  placeholder="Enter advance amount"
-                />
+              <div className="mb-4 space-y-3">
+                {/* v2.3.5: Show available advance balance */}
+                {selectedCustomer && selectedCustomerData && (selectedCustomerData.advanceBalance || 0) > 0 && (
+                  <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                        Available Advance Balance
+                      </span>
+                      <span className="text-lg font-bold text-blue-600 dark:text-blue-400">
+                        {formatCurrency(selectedCustomerData.advanceBalance || 0)}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setUseAdvance(!useAdvance)}
+                      className={`mt-2 px-3 py-1.5 text-sm rounded-lg transition-all ${
+                        useAdvance
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400'
+                      }`}
+                    >
+                      {useAdvance ? 'Using Advance' : 'Use Advance Balance'}
+                    </button>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Additional Payment (Optional)
+                  </label>
+                  <input
+                    type="number"
+                    value={paidAmount || ''}
+                    onChange={(e) => setPaidAmount(Number(e.target.value) || 0)}
+                    min="0"
+                    max={calculateTotal()}
+                    className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-white focus:ring-2 focus:ring-blue-500"
+                    placeholder="0"
+                  />
+                </div>
               </div>
             )}
           </div>

@@ -34,6 +34,7 @@ export interface Customer {
   defaultItems: DefaultItem[]; // Legacy - kept for backward compatibility
   defaultItemsBySlot?: DefaultItemsBySlot; // v2.2: Per time slot items
   schedule?: DeliverySchedule; // Only for fixed customers
+  advanceBalance: number; // v2.3.5: Advance payment balance
   createdAt: string;
 }
 
@@ -226,4 +227,40 @@ export interface MonthlyPayment {
   amount: number;
   mode: 'cash' | 'online';
   note?: string;
+}
+
+// v2.3.5: Transaction History for Customer Details
+export interface TransactionHistory {
+  id: string;
+  date: string;
+  time: string;
+  type: 'sale' | 'delivery' | 'payment' | 'advance';
+  description: string;
+  totalAmount: number;
+  paidAmount: number;
+  dueAmount: number;
+  balanceAfter: number;
+  items: TransactionItem[];
+  tags: string[];
+  paymentMode?: 'cash' | 'online' | 'due';
+  createdAt: string;
+}
+
+export interface TransactionItem {
+  productName: string;
+  quantity: number;
+  price: number;
+  total: number;
+}
+
+// v2.3.5: Advance Payment Record
+export interface AdvancePayment {
+  id: string;
+  customerId: string;
+  amount: number;
+  paymentMode: 'cash' | 'online';
+  date: string;
+  note: string;
+  usedInSale?: string; // Sale ID if advance was used
+  createdAt: string;
 }

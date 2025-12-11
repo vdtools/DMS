@@ -18,6 +18,8 @@ import {
   setDeliveries,
   addDelivery as saveDelivery,
   updateDelivery as modifyDelivery,
+  getAdvancePayments,
+  addAdvancePayment as saveAdvancePayment,
   getSettings,
   setSettings as saveSettings,
   generateId,
@@ -26,7 +28,7 @@ import {
   getMonthlyRecords,
   setMonthlyRecords as saveMonthlyRecords,
 } from '../lib/storage';
-import { User, Customer, Sale, Payment, Delivery, Settings, DashboardStats, MonthlyRecord, MonthlyDeliveryDetail, MonthlyPayment } from '../types';
+import { User, Customer, Sale, Payment, Delivery, Settings, DashboardStats, MonthlyRecord, MonthlyDeliveryDetail, MonthlyPayment, TransactionHistory, AdvancePayment } from '../types';
 
 interface AppContextType {
   // Auth
@@ -42,6 +44,7 @@ interface AppContextType {
   updateCustomer: (id: string, updates: Partial<Customer>) => void;
   deleteCustomer: (id: string) => void;
   getCustomerById: (id: string) => Customer | undefined;
+  convertCustomerType: (id: string, newType: 'fixed' | 'random', schedule?: any) => void; // v2.3.5: Convert customer type
 
   // Sales
   sales: Sale[];
@@ -50,6 +53,8 @@ interface AppContextType {
   // Payments
   payments: Payment[];
   addPayment: (payment: Omit<Payment, 'id'>) => void;
+  addAdvancePayment: (payment: Omit<AdvancePayment, 'id' | 'createdAt'>) => void; // v2.3.5: Add advance payment
+  useAdvanceBalance: (customerId: string, amount: number, saleId?: string) => void; // v2.3.5: Use advance balance
 
   // Deliveries
   deliveries: Delivery[];
@@ -66,6 +71,9 @@ interface AppContextType {
   // Dashboard
   getDashboardStats: () => DashboardStats;
   getCustomerDue: (customerId: string) => number;
+
+  // Transaction History (v2.3.5)
+  getCustomerTransactionHistory: (customerId: string) => TransactionHistory[];
 
   // Monthly Records (v2.0)
   monthlyRecords: MonthlyRecord[];
@@ -94,6 +102,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [sales, setSalesState] = useState<Sale[]>([]);
   const [payments, setPaymentsState] = useState<Payment[]>([]);
   const [deliveries, setDeliveriesState] = useState<Delivery[]>([]);
+  const [advancePayments, setAdvancePaymentsState] = useState<AdvancePayment[]>([]); // v2.3.5: Advance payments
   const [monthlyRecords, setMonthlyRecordsState] = useState<MonthlyRecord[]>([]);
   const [settings, setSettingsState] = useState<Settings>(getSettings());
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -111,6 +120,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSalesState(getSales());
     setPaymentsState(getPayments());
     setDeliveriesState(getDeliveries());
+    setAdvancePaymentsState(getAdvancePayments()); // v2.3.5: Initialize advance payments
     setMonthlyRecordsState(getMonthlyRecords());
     const savedSettings = getSettings();
     setSettingsState(savedSettings);
@@ -291,6 +301,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const newCustomer: Customer = {
       ...customer,
       id: generateId(),
+      advanceBalance: 0, // v2.3.5: Initialize advance balance to 0
       createdAt: new Date().toISOString(),
     };
     saveCustomer(newCustomer);
@@ -309,6 +320,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const getCustomerById = (id: string) => customers.find(c => c.id === id);
+
+  // v2.3.5: Convert customer type (random to fixed or fixed to random)
+  const convertCustomerType = (id: string, newType: 'fixed' | 'random', schedule?: any) => {
+    const customer = customers.find(c => c.id === id);
+    if (!customer) return;
+
+    const updates: Partial<Customer> = {
+      type: newType,
+      // Initialize advanceBalance if not present (for existing customers)
+      advanceBalance: customer.advanceBalance || 0,
+    };
+
+    if (newType === 'fixed') {
+      updates.schedule = schedule || { frequency: 'daily', timeSlots: ['morning'] };
+      // Initialize default items if empty
+      if (!customer.defaultItems || customer.defaultItems.length === 0) {
+        updates.defaultItems = [];
+      }
+    } else {
+      // If converting to random, remove schedule
+      updates.schedule = undefined;
+    }
+
+    updateCustomer(id, updates);
+  };
 
   // Sales functions
   const addSale = (sale: Omit<Sale, 'id' | 'createdAt'>) => {
@@ -329,6 +365,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
     savePayment(newPayment);
     setPaymentsState([...payments, newPayment]);
+  };
+
+  // v2.3.5: Advance Payment functions
+  const addAdvancePayment = (payment: Omit<AdvancePayment, 'id' | 'createdAt'>) => {
+    const newPayment: AdvancePayment = {
+      ...payment,
+      id: generateId(),
+      createdAt: new Date().toISOString(),
+    };
+    saveAdvancePayment(newPayment);
+    setAdvancePaymentsState([...advancePayments, newPayment]);
+    
+    // Update customer's advance balance
+    const customer = customers.find(c => c.id === payment.customerId);
+    if (customer) {
+      updateCustomer(customer.id, { advanceBalance: (customer.advanceBalance || 0) + payment.amount });
+    }
+  };
+
+  const useAdvanceBalance = (customerId: string, amount: number, saleId?: string) => {
+    const customer = customers.find(c => c.id === customerId);
+    if (!customer || (customer.advanceBalance || 0) < amount) return;
+
+    // Update customer's advance balance
+    updateCustomer(customerId, { advanceBalance: (customer.advanceBalance || 0) - amount });
   };
 
   // Delivery functions
@@ -508,6 +569,108 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     // Round to 2 decimal places to avoid floating point precision issues like 0.40000000000036
     return Math.round((totalDue - totalPaid) * 100) / 100;
+  };
+
+  // v2.3.5: Get customer transaction history
+  const getCustomerTransactionHistory = (customerId: string): TransactionHistory[] => {
+    const transactions: TransactionHistory[] = [];
+
+    // Get sales transactions
+    const customerSales = sales
+      .filter(s => s.customerId === customerId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    customerSales.forEach(sale => {
+      const dateTime = new Date(sale.createdAt);
+      transactions.push({
+        id: sale.id,
+        date: sale.date,
+        time: dateTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+        type: 'sale',
+        description: `Sale - ${sale.items.map(item => item.productName).join(', ')}`,
+        totalAmount: sale.totalAmount,
+        paidAmount: sale.paidAmount,
+        dueAmount: sale.totalAmount - sale.paidAmount,
+        balanceAfter: 0, // Will be calculated later
+        items: sale.items.map(item => ({
+          productName: item.productName,
+          quantity: item.quantity,
+          price: item.price,
+          total: item.total,
+        })),
+        tags: ['🛒 Sale'],
+        paymentMode: sale.paymentType,
+        createdAt: sale.createdAt,
+      });
+    });
+
+    // Get payment transactions
+    const customerPayments = payments
+      .filter(p => p.customerId === customerId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    customerPayments.forEach(payment => {
+      const dateTime = new Date(payment.createdAt);
+      transactions.push({
+        id: payment.id,
+        date: payment.date,
+        time: dateTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+        type: 'payment',
+        description: `Payment received${payment.note ? ` - ${payment.note}` : ''}`,
+        totalAmount: 0,
+        paidAmount: payment.amount,
+        dueAmount: 0,
+        balanceAfter: 0, // Will be calculated later
+        items: [],
+        tags: ['💰 Payment'],
+        paymentMode: payment.paymentMode,
+        createdAt: payment.createdAt,
+      });
+    });
+
+    // Get advance payment transactions
+    const customerAdvancePayments = advancePayments
+      .filter(p => p.customerId === customerId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    customerAdvancePayments.forEach(payment => {
+      const dateTime = new Date(payment.createdAt);
+      transactions.push({
+        id: payment.id,
+        date: payment.date,
+        time: dateTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+        type: 'advance',
+        description: `Advance payment${payment.note ? ` - ${payment.note}` : ''}`,
+        totalAmount: 0,
+        paidAmount: payment.amount,
+        dueAmount: 0,
+        balanceAfter: 0, // Will be calculated later
+        items: [],
+        tags: ['💳 Advance'],
+        paymentMode: payment.paymentMode,
+        createdAt: payment.createdAt,
+      });
+    });
+
+    // Sort all transactions by date and time
+    transactions.sort((a, b) => {
+      const dateA = new Date(`${a.date} ${a.time}`).getTime();
+      const dateB = new Date(`${b.date} ${b.time}`).getTime();
+      return dateB - dateA; // Most recent first
+    });
+
+    // Calculate running balance
+    let runningBalance = 0;
+    transactions.forEach(transaction => {
+      if (transaction.type === 'sale') {
+        runningBalance += transaction.dueAmount;
+      } else if (transaction.type === 'payment' || transaction.type === 'advance') {
+        runningBalance -= transaction.paidAmount;
+      }
+      transaction.balanceAfter = runningBalance;
+    });
+
+    return transactions;
   };
 
   // Dashboard stats
@@ -818,10 +981,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         updateCustomer,
         deleteCustomer,
         getCustomerById,
+        convertCustomerType,
         sales,
         addSale,
         payments,
         addPayment,
+        addAdvancePayment,
+        useAdvanceBalance,
         deliveries,
         addDelivery,
         updateDelivery,
@@ -832,6 +998,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         updateSettings,
         getDashboardStats,
         getCustomerDue,
+        getCustomerTransactionHistory,
         monthlyRecords,
         initializeMonthlyRecords,
         getMonthlyRecord,

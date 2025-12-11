@@ -38,11 +38,14 @@ export default function CustomerDetail() {
   const {
     getCustomerById,
     getCustomerDue,
+    getCustomerTransactionHistory,
     sales,
     payments,
     updateCustomer,
     deleteCustomer,
     addPayment,
+    addAdvancePayment,
+    convertCustomerType,
     settings,
     getMonthlyRecord,
     getCurrentMonth,
@@ -64,6 +67,12 @@ export default function CustomerDetail() {
   const [amountInputs, setAmountInputs] = useState<{ [key: string]: string }>({});
   const [paymentMode, setPaymentMode] = useState<'cash' | 'online'>('cash');
   const [activeSlotTab, setActiveSlotTab] = useState<TimeSlotType>('morning');
+  
+  // v2.3.5: New state variables
+  const [showAdvanceModal, setShowAdvanceModal] = useState(false);
+  const [advanceAmount, setAdvanceAmount] = useState('');
+  const [showConvertModal, setShowConvertModal] = useState(false);
+  const [convertType, setConvertType] = useState<'fixed' | 'random'>('fixed');
 
   const timeSlotOptions = [
     { value: 'morning', label: 'Morning', time: '5:00 AM', icon: Sun },
@@ -74,6 +83,9 @@ export default function CustomerDetail() {
   // Get monthly record for fixed customers
   const currentMonth = getCurrentMonth();
   const monthlyRecord = customer ? getMonthlyRecord(customer.id, currentMonth) : undefined;
+
+  // v2.3.5: Get transaction history
+  const transactionHistory = customer ? getCustomerTransactionHistory(customer.id) : [];
 
   // Get month name for display
   const getMonthName = (monthStr: string): string => {
@@ -114,6 +126,15 @@ export default function CustomerDetail() {
   };
 
   const handleDelete = () => {
+    // v2.3.5: Check if customer has due amount or advance balance before deletion
+    const dueAmount = getCustomerDue(customer.id);
+    const hasDueOrAdvance = dueAmount > 0 || (customer.advanceBalance || 0) > 0;
+    
+    if (hasDueOrAdvance) {
+      alert(`Cannot delete customer. ${dueAmount > 0 ? `Outstanding due: ₹${dueAmount}` : ''} ${(customer.advanceBalance || 0) > 0 ? `Advance balance: ₹${customer.advanceBalance}` : ''}`);
+      return;
+    }
+    
     deleteCustomer(customer.id);
     navigate('/customers');
   };
@@ -143,6 +164,40 @@ export default function CustomerDetail() {
     setShowPaymentModal(false);
     setPaymentAmount('');
     setPaymentMode('cash');
+  };
+
+  // v2.3.5: Handle advance payment
+  const handleAdvancePayment = () => {
+    if (!advanceAmount || Number(advanceAmount) <= 0) return;
+    const advanceAmt = Number(advanceAmount);
+
+    addAdvancePayment({
+      customerId: customer.id,
+      amount: advanceAmt,
+      paymentMode: paymentMode,
+      date: getTodayDate(),
+      note: 'Advance payment',
+    });
+
+    setShowAdvanceModal(false);
+    setAdvanceAmount('');
+    setPaymentMode('cash');
+  };
+
+  // v2.3.5: Handle customer type conversion
+  const handleConvertType = () => {
+    if (convertType === customer.type) return;
+    
+    if (convertType === 'fixed') {
+      // Convert to fixed - show schedule selection
+      const schedule = { frequency: 'daily' as const, timeSlots: ['morning'] as TimeSlotType[] };
+      convertCustomerType(customer.id, 'fixed', schedule);
+    } else {
+      // Convert to random
+      convertCustomerType(customer.id, 'random');
+    }
+    
+    setShowConvertModal(false);
   };
 
   const handleWhatsApp = () => {
@@ -396,8 +451,24 @@ export default function CustomerDetail() {
                   <Edit2 className="w-5 h-5 text-gray-500" />
                 </button>
                 <button
-                  onClick={() => setShowDeleteConfirm(true)}
-                  className="p-2 hover:bg-red-100 dark:hover:bg-red-900/20 rounded-lg text-red-500"
+                  onClick={() => {
+                    // v2.3.5: Check if customer has dues before allowing delete
+                    const hasDue = getCustomerDue(customer.id) > 0;
+                    const hasAdvance = (customer.advanceBalance || 0) > 0;
+                    
+                    if (hasDue || hasAdvance) {
+                      alert(`Cannot delete customer. ${hasDue ? `Outstanding due: ₹${getCustomerDue(customer.id)}` : ''} ${hasAdvance ? `Advance balance: ₹${customer.advanceBalance}` : ''}`);
+                      return;
+                    }
+                    setShowDeleteConfirm(true);
+                  }}
+                  className={`p-2 rounded-lg transition-all ${
+                    getCustomerDue(customer.id) > 0 || (customer.advanceBalance || 0) > 0
+                      ? 'opacity-50 cursor-not-allowed bg-gray-100 dark:bg-gray-700 text-gray-400'
+                      : 'hover:bg-red-100 dark:hover:bg-red-900/20 text-red-500'
+                  }`}
+                  disabled={getCustomerDue(customer.id) > 0 || (customer.advanceBalance || 0) > 0}
+                  title={getCustomerDue(customer.id) > 0 || (customer.advanceBalance || 0) > 0 ? 'Cannot delete customer with dues or advance balance' : 'Delete customer'}
                 >
                   <Trash2 className="w-5 h-5" />
                 </button>
@@ -713,7 +784,7 @@ export default function CustomerDetail() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-green-50 dark:bg-green-900/20">
@@ -737,6 +808,20 @@ export default function CustomerDetail() {
                 {formatCurrency(dueAmount)}
               </p>
               <p className="text-xs text-gray-500 dark:text-gray-400">Pending Due</p>
+            </div>
+          </div>
+        </div>
+        {/* v2.3.5: Advance Balance Card */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+              <Wallet className="w-5 h-5 text-blue-500" />
+            </div>
+            <div>
+              <p className="text-lg font-bold text-blue-600 dark:text-blue-400">
+                {formatCurrency(customer?.advanceBalance || 0)}
+              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Advance Balance</p>
             </div>
           </div>
         </div>
@@ -890,7 +975,7 @@ export default function CustomerDetail() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-2 mb-3">
+              <div className="grid grid-cols-2 gap-2 mb-3">
                 <a
                   href={`tel:+91${customer.phone}`}
                   className="flex items-center justify-center gap-1 py-2.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg text-sm font-medium"
@@ -905,6 +990,16 @@ export default function CustomerDetail() {
                   <MessageCircle className="w-4 h-4" />
                   WhatsApp
                 </button>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {/* v2.3.5: Add Advance Button */}
+                <button
+                  onClick={() => setShowAdvanceModal(true)}
+                  className="flex items-center justify-center gap-1 py-2.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg text-sm font-medium"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Advance
+                </button>
                 {dueAmount > 0 && (
                   <button
                     onClick={() => {
@@ -917,6 +1012,17 @@ export default function CustomerDetail() {
                     Receive
                   </button>
                 )}
+                {/* v2.3.5: Convert Customer Type Button */}
+                <button
+                  onClick={() => {
+                    setConvertType(customer.type === 'fixed' ? 'random' : 'fixed');
+                    setShowConvertModal(true);
+                  }}
+                  className="flex items-center justify-center gap-1 py-2.5 bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 rounded-lg text-sm font-medium"
+                >
+                  <Edit2 className="w-4 h-4" />
+                  Convert
+                </button>
               </div>
 
               <button
@@ -931,47 +1037,106 @@ export default function CustomerDetail() {
         </div>
       </div>
 
-      {/* Recent Transactions */}
+      {/* v2.3.5: Enhanced Transaction History */}
       <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm">
-        <h3 className="font-semibold text-gray-800 dark:text-white mb-4">Recent Transactions</h3>
-        {customerSales.length > 0 ? (
+        <h3 className="font-semibold text-gray-800 dark:text-white mb-4">Complete Transaction History</h3>
+        {transactionHistory.length > 0 ? (
           <div className="space-y-3">
-            {customerSales.slice(0, 5).map((sale) => (
+            {transactionHistory.slice(0, 10).map((transaction) => (
               <div
-                key={sale.id}
-                className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg"
+                key={transaction.id}
+                className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border-l-4 border-blue-500"
               >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <p className="font-medium text-gray-800 dark:text-white">
-                      {formatCurrency(sale.totalAmount)}
+                {/* Transaction Header */}
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg font-bold text-gray-800 dark:text-white">
+                        {formatCurrency(transaction.totalAmount || 0)}
+                      </span>
+                      <div className="flex gap-1">
+                        {transaction.tags.map((tag, idx) => (
+                          <span
+                            key={idx}
+                            className="px-2 py-1 text-xs rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-gray-800 dark:text-white">
+                      {formatDate(transaction.date)} {transaction.time}
                     </p>
-                    <span
-                      className={`px-2 py-0.5 text-xs rounded-full ${
-                        sale.paymentType === 'cash'
-                          ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
-                          : sale.paymentType === 'online'
-                          ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
-                          : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400'
-                      }`}
-                    >
-                      {sale.paymentType}
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Balance: {formatCurrency(transaction.balanceAfter)}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Payment Details */}
+                <div className="grid grid-cols-3 gap-3 mb-3 text-sm">
+                  <div>
+                    <p className="text-gray-500 dark:text-gray-400">Total Amount</p>
+                    <p className="font-semibold text-gray-800 dark:text-white">
+                      {formatCurrency(transaction.totalAmount)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500 dark:text-gray-400">Paid Amount</p>
+                    <p className="font-semibold text-green-600 dark:text-green-400">
+                      {formatCurrency(transaction.paidAmount)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500 dark:text-gray-400">Due Amount</p>
+                    <p className="font-semibold text-red-600 dark:text-red-400">
+                      {formatCurrency(transaction.dueAmount)}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Items List */}
+                {transaction.items.length > 0 && (
+                  <div className="mb-3">
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Items:</p>
+                    <div className="space-y-1">
+                      {transaction.items.map((item, idx) => (
+                        <div key={idx} className="flex justify-between text-sm">
+                          <span className="text-gray-600 dark:text-gray-400">
+                            {item.productName} x {item.quantity}
+                          </span>
+                          <span className="text-gray-800 dark:text-white font-medium">
+                            ₹{item.total}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Payment Mode */}
+                {transaction.paymentMode && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500 dark:text-gray-400">Payment:</span>
+                    <span className={`px-2 py-0.5 text-xs rounded-full ${
+                      transaction.paymentMode === 'cash'
+                        ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
+                        : transaction.paymentMode === 'online'
+                        ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                        : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400'
+                    }`}>
+                      {transaction.paymentMode}
                     </span>
                   </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {formatDate(sale.date)}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {sale.items.map((item, idx) => (
-                    <span
-                      key={idx}
-                      className="px-2 py-0.5 bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300 text-xs rounded"
-                    >
-                      {item.productName}: {item.quantity}
-                    </span>
-                  ))}
-                </div>
+                )}
+
+                {/* Description */}
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
+                  {transaction.description}
+                </p>
               </div>
             ))}
           </div>
@@ -1107,6 +1272,150 @@ export default function CustomerDetail() {
               >
                 Cancel
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v2.3.5: Advance Payment Modal */}
+      {showAdvanceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-800 dark:text-white">
+                Add Advance Payment - {customer.name}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowAdvanceModal(false);
+                  setPaymentMode('cash');
+                }}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setPaymentMode('cash')}
+                  className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
+                    paymentMode === 'cash'
+                      ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+                      : 'border-gray-200 dark:border-gray-600'
+                  }`}
+                >
+                  <Banknote className={`w-6 h-6 ${paymentMode === 'cash' ? 'text-green-500' : 'text-gray-400'}`} />
+                  <span className={`text-sm font-medium ${paymentMode === 'cash' ? 'text-green-600' : 'text-gray-600 dark:text-gray-300'}`}>
+                    Cash
+                  </span>
+                </button>
+                <button
+                  onClick={() => setPaymentMode('online')}
+                  className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
+                    paymentMode === 'online'
+                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                      : 'border-gray-200 dark:border-gray-600'
+                  }`}
+                >
+                  <CreditCard className={`w-6 h-6 ${paymentMode === 'online' ? 'text-blue-500' : 'text-gray-400'}`} />
+                  <span className={`text-sm font-medium ${paymentMode === 'online' ? 'text-blue-600' : 'text-gray-600 dark:text-gray-300'}`}>
+                    Online
+                  </span>
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Advance Amount
+                </label>
+                <input
+                  type="number"
+                  value={advanceAmount}
+                  onChange={(e) => setAdvanceAmount(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-white text-lg font-bold"
+                  placeholder="Enter advance amount"
+                />
+              </div>
+
+              <button
+                onClick={handleAdvancePayment}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl"
+              >
+                <Check className="w-5 h-5" />
+                Add Advance {formatCurrency(Number(advanceAmount) || 0)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v2.3.5: Customer Type Conversion Modal */}
+      {showConvertModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-800 dark:text-white">
+                Convert Customer Type
+              </h3>
+              <button
+                onClick={() => setShowConvertModal(false)}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                  Convert <strong>{customer.name}</strong> from <strong>{customer.type}</strong> to <strong>{convertType}</strong> customer?
+                </p>
+                
+                <div className="space-y-2">
+                  <button
+                    onClick={() => setConvertType('random')}
+                    className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${
+                      convertType === 'random'
+                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                        : 'border-gray-200 dark:border-gray-600'
+                    }`}
+                  >
+                    <User className={`w-5 h-5 ${convertType === 'random' ? 'text-blue-500' : 'text-gray-400'}`} />
+                    <span className={`text-sm font-medium ${convertType === 'random' ? 'text-blue-600' : 'text-gray-600 dark:text-gray-300'}`}>
+                      Random Customer (Walk-in/One-time)
+                    </span>
+                  </button>
+                  
+                  <button
+                    onClick={() => setConvertType('fixed')}
+                    className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${
+                      convertType === 'fixed'
+                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                        : 'border-gray-200 dark:border-gray-600'
+                    }`}
+                  >
+                    <UserCheck className={`w-5 h-5 ${convertType === 'fixed' ? 'text-blue-500' : 'text-gray-400'}`} />
+                    <span className={`text-sm font-medium ${convertType === 'fixed' ? 'text-blue-600' : 'text-gray-600 dark:text-gray-300'}`}>
+                      Fixed Customer (Regular delivery)
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={handleConvertType}
+                  className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl"
+                >
+                  Convert to {convertType}
+                </button>
+                <button
+                  onClick={() => setShowConvertModal(false)}
+                  className="flex-1 py-3 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 font-medium rounded-xl"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -6,6 +6,7 @@ const STORAGE_KEYS = {
   SALES: 'dairy_sales',
   PAYMENTS: 'dairy_payments',
   DELIVERIES: 'dairy_deliveries',
+  ADVANCE_PAYMENTS: 'dairy_advance_payments', // v2.3.5: Advance payments
   SETTINGS: 'dairy_settings',
   IS_LOGGED_IN: 'dairy_logged_in',
   MONTHLY_RECORDS: 'dairy_monthly_records',
@@ -115,6 +116,21 @@ export function addPayment(payment: any) {
   const payments = getPayments();
   payments.push(payment);
   setPayments(payments);
+}
+
+// v2.3.5: Advance Payments functions
+export function getAdvancePayments() {
+  return getItem(STORAGE_KEYS.ADVANCE_PAYMENTS, []);
+}
+
+export function setAdvancePayments(payments: any[]) {
+  setItem(STORAGE_KEYS.ADVANCE_PAYMENTS, payments);
+}
+
+export function addAdvancePayment(payment: any) {
+  const payments = getAdvancePayments();
+  payments.push(payment);
+  setAdvancePayments(payments);
 }
 
 // Deliveries functions
